@@ -1,0 +1,615 @@
+Getting Started: Gemma 4 Developer Agent
+1. Environment Configuration and Package Installation
+In [1]:
+import glob
+import importlib
+import logging
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+# Configure environment variables for offline vLLM serving and LiteLLM routing
+os.environ['TRANSFORMERS_NO_TF'] = '1'
+os.environ['TRANSFORMERS_NO_FLAX'] = '1'
+os.environ['TRANSFORMERS_OFFLINE'] = '1'
+os.environ['VLLM_NO_USAGE_STATS'] = '1'
+os.environ['VLLM_WORKER_MULTIPROC_METHOD'] = 'spawn'
+os.environ['VLLM_ENGINE_READY_TIMEOUT_S'] = '1200'
+os.environ['VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS'] = '1'
+os.environ['NCCL_DEBUG'] = 'WARN'
+os.environ['LITELLM_LOCAL_MODEL_COST_MAP'] = 'True'
+os.environ['LITELLM_TELEMETRY'] = 'False'
+os.environ['LITELLM_LOG'] = 'WARNING'
+os.environ['OPENAI_API_KEY'] = os.environ.get('OPENAI_API_KEY', 'EMPTY')
+os.environ['LOCAL_API_KEY'] = os.environ.get('LOCAL_API_KEY', 'EMPTY')
+os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
+os.environ['OTEL_SDK_DISABLED'] = 'true'
+os.environ['OTEL_PYTHON_DISABLED'] = 'true'
+
+
+def configure_logging() -> None:
+    """Silence verbose third-party loggers."""
+    for name in (
+        'LiteLLM',
+        'LiteLLM Router',
+        'LiteLLM Proxy',
+        'litellm',
+        'httpx',
+        'httpcore',
+        'openai',
+        'urllib3',
+        'opentelemetry',
+        'opentelemetry.context',
+    ):
+        lg = logging.getLogger(name)
+        lg.setLevel(logging.WARNING)
+        if 'litellm' in name.lower():
+            lg.propagate = False
+            lg.handlers.clear()
+
+
+configure_logging()
+
+WHEELHOUSE_DIR = Path('/kaggle/input/datasets/metric/gemma-4-developer-agent-wheelhouse')
+
+# Remove broken cutlass .pth hooks if present
+for pth_pattern in (
+    '/usr/local/lib/python*/dist-packages/*cutlass*.pth',
+    '/usr/local/lib/python*/site-packages/*cutlass*.pth',
+):
+    for pth in glob.glob(pth_pattern):
+        try:
+            os.unlink(pth)
+        except OSError:
+            pass
+
+# Restore PEP 440 '+cu128' wheel filenames stripped by Kaggle dataset uploads
+tmp_whl = Path('/tmp/wheelhouse')
+tmp_whl.mkdir(parents=True, exist_ok=True)
+for w in WHEELHOUSE_DIR.glob('*.whl'):
+    if 'cutlass' in w.name.lower():
+        continue
+    target_name = (
+        w.name.replace('cu128', '+cu128')
+        if ('cu128' in w.name and '+' not in w.name)
+        else w.name
+    )
+    target = tmp_whl / target_name
+    if not target.exists():
+        try:
+            os.symlink(w, target)
+        except OSError:
+            shutil.copyfile(w, target)
+
+wheels = sorted(str(w) for w in tmp_whl.glob('*.whl'))
+print(f'Installing {len(wheels)} wheels from {WHEELHOUSE_DIR}...')
+subprocess.run(
+    [sys.executable, '-m', 'pip', 'install', '-q', '--no-deps', '--force-reinstall', *wheels],
+    check=True,
+)
+importlib.invalidate_caches()
+configure_logging()
+print('Wheelhouse installation complete.')
+
+Installing 41 wheels from /kaggle/input/datasets/metric/gemma-4-developer-agent-wheelhouse...
+Wheelhouse installation complete.
+
+2. Competition Dataset and Sample Submission
+In [2]:
+import re
+from swegemma.models import load_tasks
+
+DATA_DIR = Path('/kaggle/input/competitions/gemma-4-developer-agent')
+WORKING_DIR = Path('/kaggle/working')
+WORKING_DIR.mkdir(parents=True, exist_ok=True)
+
+# Official quantized competition models:
+#   - 'gemma-4-31b-it-qat-w4a16-ct' (default in sample_submission)
+#   - 'gemma-4-12b-it-qat-w4a16-ct'
+#   - 'gemma-4-e4b-it-qat-w4a16-ct'
+#   - 'gemma-4-e2b-it-qat-w4a16-ct'
+MODEL_NAME = 'gemma-4-12b-it-qat-w4a16-ct'
+
+# Copy sample_submission to a writable directory for customization and packaging
+SAMPLE_SUBMISSION_SRC = DATA_DIR / 'sample_submission'
+AGENT_DIR = WORKING_DIR / 'sample_submission'
+if AGENT_DIR.exists():
+    shutil.rmtree(AGENT_DIR)
+shutil.copytree(SAMPLE_SUBMISSION_SRC, AGENT_DIR)
+
+# If switching away from 31B, update all agent YAMLs and remove the 31B-shaped sample LoRA adapters
+if MODEL_NAME != 'gemma-4-31b-it-qat-w4a16-ct':
+    for yaml_path in [AGENT_DIR / 'agent.yaml', *sorted((AGENT_DIR / 'sub_agents').glob('*.yaml'))]:
+        if yaml_path.is_file():
+            text = yaml_path.read_text(encoding='utf-8')
+            text = re.sub(r'^(\s*model:\s*).*$', rf'\g<1>{MODEL_NAME}', text, flags=re.MULTILINE)
+            text = re.sub(r'^\s*adapter:\s*.*\n?', '', text, flags=re.MULTILINE)
+            yaml_path.write_text(text, encoding='utf-8')
+    shutil.rmtree(AGENT_DIR / 'adapters', ignore_errors=True)
+
+# Load tasks from the published dataset
+TASKS_PATH = DATA_DIR / 'tasks.jsonl'
+tasks = load_tasks(TASKS_PATH)
+
+print(f'Data directory: {DATA_DIR}')
+print(f'Agent directory: {AGENT_DIR} (model={MODEL_NAME})')
+print(f'Loaded {len(tasks)} tasks from {TASKS_PATH.name}')
+for t in tasks[:5]:
+    print(f'  - {t.instance_id} ({t.repo} @ {t.base_commit[:8]})')
+
+Data directory: /kaggle/input/competitions/gemma-4-developer-agent
+Agent directory: /kaggle/working/sample_submission (model=gemma-4-12b-it-qat-w4a16-ct)
+Loaded 129 tasks from tasks.jsonl
+  - fastapi_15661 (fastapi/fastapi @ ee22a4b8)
+  - fastapi_15588 (fastapi/fastapi @ cb83b83d)
+  - fastapi_15589 (fastapi/fastapi @ 22b02e26)
+  - fastapi_15030 (fastapi/fastapi @ 48d58ae3)
+  - fastapi_14962 (fastapi/fastapi @ 1e78a36b)
+
+3. Code Graph Functions
+In [3]:
+from swegemma import graph as sg
+
+sample_task = tasks[0]
+GRAPH_DIR = str(DATA_DIR / 'graphs')
+EMBEDDINGS_DIR = str(DATA_DIR / 'embeddings')
+
+# Load the pre-computed repository code graph and node embeddings for the sample task
+repo_graph = sg.get_graph(
+    repo_name=sample_task.repo,
+    graph_dir=GRAPH_DIR,
+    embeddings_dir=EMBEDDINGS_DIR,
+    base_commit=sample_task.base_commit,
+)
+sample_nodes = list(repo_graph.nodes())
+print(f'Graph for {sample_task.repo} ({sample_task.instance_id}):')
+print(f'  Nodes: {repo_graph.number_of_nodes()}, Edges: {repo_graph.number_of_edges()}')
+
+# Select a connected symbol and query structural neighbors (callers, callees, definitions)
+query_node = next((n for n, deg in repo_graph.degree() if deg >= 5), sample_nodes[0])
+neighbors = sg.get_neighbor(
+    node=query_node,
+    graph=repo_graph,
+    max_neighbors=10,
+)
+print(f'\nNeighbors of {query_node!r} (showing up to 5):')
+for n in neighbors[:5]:
+    print(f'  - {n}')
+
+# Search for semantically similar code nodes using pre-computed vector embeddings
+similar = sg.get_similar_nodes(
+    node=query_node,
+    repo_name=sample_task.repo,
+    k=5,
+    graph=repo_graph,
+    graph_dir=GRAPH_DIR,
+    embeddings_dir=EMBEDDINGS_DIR,
+    base_commit=sample_task.base_commit,
+)
+print(f'\nTop similar nodes to {query_node!r}:')
+for item in similar:
+    print(f"  - {item['node_name']} (similarity={item['similarity']:.4f})")
+
+# Extract an induced subgraph connecting the query symbol and its neighbors
+focal_nodes = [query_node, *neighbors[:4]]
+subgraph = sg.get_induced_subgraph(repo_graph, focal_nodes)
+print(
+    f'\nInduced subgraph over {len(focal_nodes)} focal nodes: '
+    f'{subgraph.number_of_nodes()} nodes, {subgraph.number_of_edges()} edges'
+)
+
+Graph for fastapi/fastapi (fastapi_15661):
+  Nodes: 4263, Edges: 2430
+
+Neighbors of 'custom_request_and_route.tutorial002_py310.ValidationErrorLoggingRoute.get_route_handler' (showing up to 5):
+  - fastapi/fastapi;custom_request_and_route.tutorial002_py310.ValidationErrorLoggingRoute
+  - fastapi/fastapi;fastapi.exceptions.HTTPException
+  - fastapi/fastapi;fastapi.exceptions.RequestValidationError
+
+Top similar nodes to 'custom_request_and_route.tutorial002_py310.ValidationErrorLoggingRoute.get_route_handler':
+  - custom_request_and_route.tutorial002_an_py310.ValidationErrorLoggingRoute.get_route_handler (similarity=1.0000)
+  - fastapi.routing.APIRouter.__init__ (similarity=0.9996)
+  - fastapi.applications.FastAPI.setup (similarity=0.9993)
+  - custom_request_and_route.tutorial002_an_py310.ValidationErrorLoggingRoute (similarity=0.9991)
+  - custom_request_and_route.tutorial002_py310.ValidationErrorLoggingRoute (similarity=0.9991)
+
+Induced subgraph over 4 focal nodes: 4 nodes, 6 edges
+
+4. Start vLLM Server
+In [4]:
+import litellm
+import torch
+from adk_submission import VllmConfig, VllmServer, discover_adapters
+from adk_submission.discovery import discover_declared_models
+from swegemma.config import ALLOWED_ADAPTER_EXTENSIONS
+
+litellm.drop_params = True
+
+ALLOWED_MODEL_NAMES = frozenset({
+    'gemma-4-31b-it-qat-w4a16-ct',
+    'gemma-4-12b-it-qat-w4a16-ct',
+    'gemma-4-e4b-it-qat-w4a16-ct',
+    'gemma-4-e2b-it-qat-w4a16-ct',
+})
+MODEL_VLLM_EXTRA_ARGS = {
+    'gemma-4-12b-it-qat-w4a16-ct': (
+        '--hf-overrides',
+        '{"architectures": ["Gemma4ForCausalLM"], "model_type": "gemma4"}',
+    ),
+}
+_SAFE_PATH_COMPONENT = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]*')
+INFERENCE_API_KEY = os.environ.get('LOCAL_API_KEY', 'EMPTY')
+
+# Validate single canonical base model and discover any PEFT LoRA adapters in the submission directory.
+# Note: sample_submission includes dummy LoRA adapters (adapters/main_lora and adapters/tool_lora)
+# shaped for gemma-4-31b-it-qat-w4a16-ct; Cell 2 removes them automatically when MODEL_NAME != 31B.
+declared_models = discover_declared_models(AGENT_DIR)
+assert len(declared_models) == 1, f'Expected exactly 1 declared model, got: {sorted(declared_models)}'
+declared_model = next(iter(declared_models))
+assert declared_model in ALLOWED_MODEL_NAMES, f'Unsupported model {declared_model!r}. Allowed: {sorted(ALLOWED_MODEL_NAMES)}'
+
+MODEL_PATH = Path(f'/kaggle/input/models/google/gemma-4/other/{declared_model}/2')
+assert MODEL_PATH.exists(), f'Model weights not found at {MODEL_PATH}. Ensure the model input is attached.'
+
+adapters = discover_adapters(str(AGENT_DIR), adapter_extensions=ALLOWED_ADAPTER_EXTENSIONS)
+adapter_map = getattr(adapters, 'adapters', None) or {}
+for adapter_name in adapter_map:
+    assert _SAFE_PATH_COMPONENT.fullmatch(adapter_name), (
+        f'Unsafe adapter name {adapter_name!r}: must match [A-Za-z0-9][A-Za-z0-9._-]*'
+    )
+detected_ranks = [
+    r for info in adapter_map.values() if (r := getattr(info, 'rank', None)) is not None and r > 0
+]
+
+gpu_count = torch.cuda.device_count() if torch.cuda.is_available() else 1
+tp_size = 4 if gpu_count >= 4 else (2 if gpu_count >= 2 else 1)
+
+if 'server_instance' in globals() and server_instance is not None:
+    server_instance.stop()
+
+vllm_cfg = VllmConfig(
+    model=str(MODEL_PATH),
+    port=8000,
+    host='127.0.0.1',
+    tool_call_parser='gemma4',
+    reasoning_parser='gemma4',
+    max_model_len=32768,
+    dtype='bfloat16' if (torch.cuda.is_available() and torch.cuda.is_bf16_supported()) else 'auto',
+    gpu_memory_utilization=0.90,
+    enable_auto_tool_choice=True,
+    enable_lora=bool(adapter_map),
+    max_loras=max(1, len(adapter_map)),
+    max_lora_rank=max(detected_ranks) if detected_ranks else 128,
+    scheduler_reserve_full_isl=False,
+    tensor_parallel_size=tp_size,
+    startup_timeout=60 * 20,
+    extra_args=MODEL_VLLM_EXTRA_ARGS.get(declared_model, ()),
+)
+server_instance = VllmServer(vllm_cfg, adapter_manifest=adapters)
+server_instance.start()
+print(f'vLLM server started on {server_instance.base_url} (tp={tp_size})')
+
+# Register model and LoRA adapter aliases for Google ADK
+models = server_instance.create_model_registry(
+    aliases=[declared_model],
+    model_prefix='openai/',
+    api_key=INFERENCE_API_KEY,
+)
+
+vLLM server started on http://127.0.0.1:8000/v1 (tp=4)
+
+5. Run Phase 1 Inference and Phase 2 Verification
+In [5]:
+import asyncio
+import concurrent.futures
+import pandas as pd
+import yaml
+from google.adk.agents.context_cache_config import ContextCacheConfig
+from google.adk.apps._configs import EventsCompactionConfig
+from swegemma.config import EvalConfig, build_submission_limits
+from swegemma.evaluate import Evaluator
+
+
+def run_sync(coro_or_fn, *args, **kwargs):
+    """Run an async coroutine synchronously inside a notebook event loop."""
+    if callable(coro_or_fn) and not asyncio.iscoroutine(coro_or_fn):
+        fn = lambda: coro_or_fn(*args, **kwargs)
+    else:
+        fn = lambda: coro_or_fn
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if loop is not None and loop.is_running():
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(lambda: asyncio.run(fn())).result()
+    return asyncio.run(fn())
+
+
+# Read optional evaluation settings from the submission's eval_config.yaml / eval_config.yml
+eval_config_file = next(
+    (c for name in ('eval_config.yaml', 'eval_config.yml') if (c := AGENT_DIR / name).is_file()),
+    None,
+)
+raw_eval_cfg = (
+    yaml.safe_load(eval_config_file.read_text(encoding='utf-8')) or {}
+    if eval_config_file is not None
+    else {}
+)
+eval_section = raw_eval_cfg.get('evaluation', raw_eval_cfg)
+
+timeout_seconds = int(eval_section.get('timeout_seconds', 300))
+verification_timeout_seconds = int(eval_section.get('verification_timeout_seconds', 300))
+max_tool_calls = int(eval_section.get('max_tool_calls', 100))
+max_time_minutes = float(eval_section.get('max_time_minutes', 60.0))
+turns_raw = eval_section.get('max_turns', eval_section.get('max_llm_calls'))
+max_turns = int(turns_raw) if turns_raw is not None else None
+
+# Select a small subset of tasks from the published dataset
+SAMPLE_TASKS = tasks[:2]
+limits, gen_constraints = build_submission_limits()
+
+# Configure Evaluator to run Phase 1 (agent patch generation) and Phase 2 (verification)
+# using the subprocess sandbox backend and the submission's eval_config parameters
+eval_config = EvalConfig(
+    tasks_path=TASKS_PATH,
+    snapshots_dir=DATA_DIR / 'snapshots',
+    results_dir=WORKING_DIR / 'results',
+    submission_dir=AGENT_DIR,
+    models=models,
+    sandbox='subprocess',
+    timeout_seconds=timeout_seconds,
+    verification_timeout_seconds=verification_timeout_seconds,
+    max_time_minutes=max_time_minutes,
+    max_tool_calls=max_tool_calls,
+    max_turns=max_turns,
+    limits=limits,
+    generation_constraints=gen_constraints,
+    adapter_manifest=adapters,
+    context_cache_config=ContextCacheConfig(min_tokens=2048, ttl_seconds=1800, cache_intervals=10),
+    events_compaction_config=EventsCompactionConfig(
+        compaction_interval=15,
+        overlap_size=2,
+        token_threshold=14336,
+        event_retention_size=5,
+    ),
+    graph_dir=GRAPH_DIR,
+    embeddings_dir=EMBEDDINGS_DIR,
+    wheels_dir=DATA_DIR / 'wheels',
+    verbose=False,
+)
+
+evaluator = Evaluator(eval_config)
+predictions = []
+
+for idx, task in enumerate(SAMPLE_TASKS, start=1):
+    print(f'[{idx}/{len(SAMPLE_TASKS)}] Evaluating {task.instance_id} ({task.repo})...')
+    result = run_sync(
+        evaluator.evaluate_task,
+        task=task,
+        task_index=idx,
+        total_tasks=len(SAMPLE_TASKS),
+    )
+    patch = (result.agent_patch or '').strip()
+    predictions.append({'id': task.instance_id, 'prediction': patch if patch else 'NO_PATCH'})
+    print(
+        f'  -> resolved={result.resolved}, '
+        f'exit_code={result.test_exit_code}, '
+        f'patch_chars={len(patch)}, '
+        f'tool_calls={result.tool_calls}, '
+        f'duration={result.duration_seconds:.1f}s'
+    )
+
+submission_df = pd.DataFrame(predictions, columns=['id', 'prediction'])
+display(submission_df)
+
+/usr/local/lib/python3.12/dist-packages/google/adk/features/_feature_decorator.py:72: UserWarning: [EXPERIMENTAL] feature FeatureName.AGENT_CONFIG is enabled.
+  check_feature_enabled()
+/tmp/ipykernel_65/3339676562.py:68: UserWarning: [EXPERIMENTAL] EventsCompactionConfig: This feature is experimental and may change or be removed in future versions without notice. It may introduce breaking changes at any time.
+  events_compaction_config=EventsCompactionConfig(
+WARNING:swegemma.sandbox.subprocess:ensurepip unavailable in sandbox 6d7ab3b3-55b, creating venv without pip: Command '['/tmp/swegemma_sandbox_6d7ab3b3-55b_y3cfjq6j/venv/bin/python3', '-m', 'ensurepip', '--upgrade', '--default-pip']' returned non-zero exit status 1.
+
+[1/2] Evaluating fastapi_15661 (fastapi/fastapi)...
+
+  [   0.0s] 📋 System Prompt: You are an expert autonomous software engineer assigned to resolve an issue in a 
+repository efficiently and decisively.
+  [   0.0s] 🎯 Task Prompt: You are evaluating a software engineering task for repository fastapi/fastapi.
+  [  12.2s] 💭 (1783 chars) "Okay, I<image|>The user wants me to "Automate release preparation" for the `fastapi` 
+repository.
+Looking at the provided..."
+  [  12.2s] 🔧 run_command ls -R scripts
+  [  12.2s]   → scripts:
+  [  14.1s] 💭 (278 chars) "The `scripts` directory contains many scripts. The task is "Automate release 
+preparation".
+I don't see a script named `r..."
+  [  14.1s] 🔧 run_command grep -r "release" . | head -n 20
+  [  14.2s]   → ./scripts/add_latest_release_date.py:"""Check release-notes.md and add today's date to the latest 
+release header if miss
+  [  15.9s] 💭 (263 chars) "The grep results show:
+- `./scripts/add_latest_release_date.py`
+- `./.github/workflows/publish.yml`
+- `./.github/workflo..."
+  [  15.9s] 📖 read_file (.github/workflows/publish.yml)
+  [  15.9s]   ✓ {'status': 'ok', 'filepath': '.github/workflows/publish.yml', 'content': 'name: Publish\n\non:\n  
+release:\n    types:\n…
+  [  17.5s] 💭 (268 chars) "The `publish.yml` workflow runs when a release is created. It builds the distribution 
+and publishes it.
+
+The task "Autom..."
+  [  17.5s] 📖 read_file (scripts/add_latest_release_date.py)
+  [  17.5s]   ✓ {'status': 'ok', 'filepath': 'scripts/add_latest_release_date.py', 'content': '"""Check 
+release-notes.md and add today\'…
+  [  19.3s] 💭 (291 chars) "This script adds today's date to the latest release header in 
+`docs/en/docs/release-notes.md`.
+
+The task is "Automate re..."
+  [  19.3s] 📖 read_file (scripts/test.sh)
+  [  19.3s]   ✓ {'status': 'ok', 'filepath': 'scripts/test.sh', 'content': '#!/usr/bin/env bash\n\nset -e\nset 
+-x\n\nexport PYTHONPATH=.…
+  [  21.0s] 💭 (325 chars) "It runs `pytest` on `tests`, `scripts/tests/`, and any arguments.
+
+Let's look at the `scripts/tests` directory again.
+It..."
+  [  21.0s] 📖 read_file (scripts/deploy_docs_status.py)
+  [  21.0s]   ✓ {'status': 'ok', 'filepath': 'scripts/deploy_docs_status.py', 'content': 'import logging\nimport 
+re\nfrom typing import …
+  [  23.3s] 💭 (349 chars) "This script seems to be for deploying docs and posting a comment on a PR.
+
+The task is "Automate release preparation".
+M..."
+  [  23.3s] 📖 read_file (scripts/contributors.py)
+  [  23.3s]   ✓ {'status': 'ok', 'filepath': 'scripts/contributors.py', 'content': 'import logging\nimport 
+secrets\nimport subprocess\nf…
+  [  24.6s] 💭 (139 chars) "This script is for getting contributors.
+
+The task is "Automate release preparation".
+I'll search for "release" in the `..."
+  [  24.6s] 🔧 run_command grep -r "release" scripts
+  [  24.6s]   → scripts/add_latest_release_date.py:"""Check release-notes.md and add today's date to the latest 
+release header if missin
+  [  26.1s] 💭 (252 chars) "It seems `add_latest_release_date.py` is the only script that mentions "release" in its
+content.
+
+Wait, I should check i..."
+  [  26.1s] 🔧 run_command grep -r "release" . | head -n 50
+  [  26.2s]   → ./scripts/add_latest_release_date.py:"""Check release-notes.md and add today's date to the latest 
+release header if miss
+  [  29.1s] 💭 (455 chars) "The grep results show that `scripts/add_latest_release_date.py` is indeed the main 
+script for release notes.
+
+However, t..."
+  [  29.1s] 📖 read_file (scripts/translation_fixer.py)
+  [  29.2s]   ✓ {'status': 'ok', 'filepath': 'scripts/translation_fixer.py', 'content': 'import os\nfrom 
+collections.abc import Iterable…
+  [  32.7s] 💭 (647 chars) "This script is for fixing translations.
+
+The task is "Automate release preparation".
+Maybe I should look for a script th..."
+  [  32.7s] 📖 read_file (scripts/docs.py)
+  [  32.8s]   ❌ {'status': 'error', 'error_type': 'BudgetExceeded', 'error_message': 'Tool call budget exhausted 
+(10 calls)'}
+
+╭───────────────────────────────────────────────── Latest Detail ─────────────────────────────────────────────────╮
+│   📖 read_file                                                                                                  │
+│                                                                                                                 │
+│   Path:                                                                                                         │
+│     scripts/docs.py                                                                                             │
+│                                                                                                                 │
+│   Response:                                                                                                     │
+│     {'status': 'error', 'error_type': 'BudgetExceeded', 'error_message': 'Tool call budget exhausted (10        │
+│ calls)'}                                                                                                        │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─────────────────────────────────────────── SWE-gemma Agent Evaluator ───────────────────────────────────────────╮
+│   [1/2] fastapi_15661 (fastapi/fastapi)  ·  1m 00s                                                              │
+│                                                                                                                 │
+│           Tools ━━━━━━━━━━━━━━━━━━━━━━   10 / 10  (0 left)                                                      │
+│            Cost ━━━━━━━━━━━━━━━━━━━━━━   $0.00 (Unlimited)                                                      │
+│            Time ━━━━━━━━━━━━━━━━━━━━━━   1.0m / 1m  (0.0m left)                                                 │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+WARNING:swegemma.harness.agent_runner:Task fastapi_15661 agent timed out.
+WARNING:swegemma.harness.agent_runner:Task fastapi_15661 completed without explicit submit_patch call and no working tree modifications.
+WARNING:swegemma.sandbox.subprocess:ensurepip unavailable in sandbox 110eb980-31d, creating venv without pip: Command '['/tmp/swegemma_sandbox_110eb980-31d_3xnawmiv/venv/bin/python3', '-m', 'ensurepip', '--upgrade', '--default-pip']' returned non-zero exit status 1.
+
+  -> resolved=False, exit_code=-1, patch_chars=0, tool_calls=10, duration=70.2s
+[2/2] Evaluating fastapi_15588 (fastapi/fastapi)...
+
+  [   0.0s] 📋 System Prompt: You are an expert autonomous software engineer assigned to resolve an issue in a 
+repository efficiently and decisively.
+  [   0.0s] 🎯 Task Prompt: You are evaluating a software engineering task for repository fastapi/fastapi.
+  [   3.1s] 💭 (489 chars) "Okay, I understand the task. I need to validate Server Sent Event (SSE) fields to avoid
+applications from sending broken..."
+  [   3.1s] 💬 I will begin by examining the `fastapi/sse.py` file to identify where the SSE fields are handled and
+where the validation should be implemented.
+<|cha...
+  [   3.1s] 📖 read_file (fastapi/sse.py)
+  [   3.1s]   ✓ {'status': 'ok', 'filepath': 'fastapi/sse.py', 'content': 'from typing import Annotated, 
+Any\n\nfrom annotated_doc impor…
+  [  10.2s] 💭 (1501 chars) "The `ServerSentEvent` class in `fastapi/sse.py` represents a single SSE event. It has 
+fields `data`, `raw_data`, `event`..."
+  [  10.2s] 📖 read_file (fastapi/sse.py)
+  [  10.2s]   ✓ {'status': 'ok', 'filepath': 'fastapi/sse.py', 'content': '                "ServerSentEvent. Use 
+\'data\' for JSON-seria…
+  [  20.0s] 💭 (2236 chars) "In `format_sse_event`, `event` and `id` are used to build the wire format.
+
+```python
+    if event is not None:
+        ..."
+  [  20.0s] 🔧 run_command grep -r "_check_id_no_null" .
+  [  20.2s]   → ./fastapi/sse.py:def _check_id_no_null(v: str | None) -> str | None:
+  [  38.9s] 💭 (4394 chars) "It's only used in `fastapi/sse.py`.
+
+I'll implement the change in `fastapi/sse.py`.
+
+I will:
+1. Add `_check_no_newlines`..."
+  [  38.9s] 📖 read_file (fastapi/sse.py)
+  [  38.9s]   ✓ {'status': 'ok', 'filepath': 'fastapi/sse.py', 'content': '\n    Works with **any HTTP method** 
+(`GET`, `POST`, etc.), w…
+  [  56.5s] 💭 (4050 chars) "Okay, I'll implement the changes.
+
+First, I'll add `_check_no_newlines` validator.
+
+```python
+def _check_no_newlines(v: ..."
+  [  56.5s] 🔧 run_command grep -n "raise ValueError" fastapi/sse.py
+  [  56.6s]   → 38:        raise ValueError("SSE 'id' must not contain null characters")
+
+╭───────────────────────────────────────────────── Latest Detail ─────────────────────────────────────────────────╮
+│   🔧 run_command                                                                                                │
+│                                                                                                                 │
+│   Command:                                                                                                      │
+│     grep -n "raise ValueError" fastapi/sse.py                                                                   │
+│                                                                                                                 │
+│   Stdout:                                                                                                       │
+│     38:        raise ValueError("SSE 'id' must not contain null characters")                                    │
+│     138:            raise ValueError(                                                                           │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─────────────────────────────────────────── SWE-gemma Agent Evaluator ───────────────────────────────────────────╮
+│   [2/2] fastapi_15588 (fastapi/fastapi)  ·  1m 00s                                                              │
+│                                                                                                                 │
+│           Tools ━━━━━━━━━━━╺━━━━━━━━━━   5 / 10  (5 left)                                                       │
+│            Cost ━━━━━━━━━━━━━━━━━━━━━━   $0.00 (Unlimited)                                                      │
+│            Time ━━━━━━━━━━━━━━━━━━━━━╸   1.0m / 1m  (0.0m left)                                                 │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+WARNING:swegemma.harness.agent_runner:Task fastapi_15588 agent timed out.
+WARNING:swegemma.harness.agent_runner:Task fastapi_15588 completed without explicit submit_patch call and no working tree modifications.
+
+  -> resolved=False, exit_code=-1, patch_chars=0, tool_calls=5, duration=67.3s
+
+	id	prediction
+0	fastapi_15661	NO_PATCH
+1	fastapi_15588	NO_PATCH
+6. Package Submission Archive
+In [6]:
+import zipfile
+from adk_submission import validate_directory
+from swegemma.config import ALLOWED_SUBMISSION_EXTENSIONS, MAX_SUBMISSION_SIZE_BYTES
+
+# Validate unpacked submission directory structure, file types, symlinks, and size limits
+for dirpath, dirnames, filenames in os.walk(AGENT_DIR, followlinks=False):
+    parent = Path(dirpath)
+    for name in (*dirnames, *filenames):
+        assert not (parent / name).is_symlink(), f'Symlinks are not permitted: {(parent / name).relative_to(AGENT_DIR)}'
+validate_directory(AGENT_DIR, limits=limits)
+
+# Create submission.zip with agent.yaml at the root of the archive
+zip_base = WORKING_DIR / 'submission'
+zip_path = Path(shutil.make_archive(str(zip_base), 'zip', root_dir=AGENT_DIR))
+
+# Validate archive contents against competition constraints
+with zipfile.ZipFile(zip_path, 'r') as zf:
+    infos = zf.infolist()
+    total_size = sum(i.file_size for i in infos)
+    assert total_size <= MAX_SUBMISSION_SIZE_BYTES, f'Archive exceeds 3 GiB limit: {total_size}'
+    for info in infos:
+        if not info.is_dir():
+            ext = Path(info.filename).suffix.lower()
+            assert ext in ALLOWED_SUBMISSION_EXTENSIONS, f'Disallowed file extension: {info.filename}'
+
+print(f'Created {zip_path} ({zip_path.stat().st_size / (1024 * 1024):.2f} MiB)')
+
+Created /kaggle/working/submission.zip (0.00 MiB)
