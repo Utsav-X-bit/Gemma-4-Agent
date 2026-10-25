@@ -117,6 +117,20 @@ Expected:
 
 The script creates a venv with `--system-site-packages`, removes broken cutlass `.pth` hooks, stages wheels with the `+cu128` fix, and falls back to dependency resolution if the bare `--no-deps` install does not import.
 
+If `python3.12` is missing, use the uv-based setup (no sudo):
+
+```bash
+bash phase1/02b_setup_harness_uv.sh
+```
+
+If `uv` is also missing:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+source ~/.local/bin/env
+bash phase1/02b_setup_harness_uv.sh
+```
+
 If import fails, read the error before changing anything:
 
 ```bash
