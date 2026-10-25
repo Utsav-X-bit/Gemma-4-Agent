@@ -34,7 +34,10 @@ echo "== Staging wheels =="
 rm -rf /tmp/gemma4-wheelhouse
 mkdir -p /tmp/gemma4-wheelhouse
 for w in "$WHEELS"/*.whl; do
-  case "$(basename "$w")" in *cutlass*) continue;; esac
+  case "$(basename "$w")" in
+    *cutlass*) continue ;;
+    prometheus_fastapi_instrumentator-8.1.0*) continue ;;  # incompatible with google-adk's starlette<1
+  esac
   name="$(basename "$w")"
   case "$name" in
     *cu128*+*) ;;
@@ -48,7 +51,9 @@ uv pip install --no-deps --force-reinstall /tmp/gemma4-wheelhouse/*.whl || true
 
 if ! python -c "import swegemma, adk_submission" >/dev/null 2>&1; then
   echo "Bare install did not import; retrying with dependency resolution"
-  uv pip install --force-reinstall /tmp/gemma4-wheelhouse/*.whl
+  # prometheus-fastapi-instrumentator 8.1.0 requires starlette>=1.0,
+  # but google-adk 1.36.1 requires starlette<1.0. Use 7.1.0, which vLLM allows.
+  uv pip install --force-reinstall     /tmp/gemma4-wheelhouse/*.whl     'prometheus-fastapi-instrumentator==7.1.0'
 fi
 
 echo "== Import check =="

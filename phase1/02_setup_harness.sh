@@ -39,6 +39,7 @@ mkdir -p /tmp/gemma4-wheelhouse
 for w in "$WHEELS"/*.whl; do
   case "$(basename "$w")" in
     *cutlass*) continue ;;
+    prometheus_fastapi_instrumentator-8.1.0*) continue ;;  # incompatible with google-adk's starlette<1
   esac
   name="$(basename "$w")"
   case "$name" in
