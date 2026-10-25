@@ -9,7 +9,7 @@
 ## 0. What you need
 
 - SSH access to the remote 4×A100 box.
-- Kaggle API token at `~/.kaggle/kaggle.json` on the remote box (mode 600).
+- Kaggle auth. The installed CLI may be old and require `~/.kaggle/kaggle.json` (legacy API key, mode 600). A new CLI also accepts `KAGGLE_API_TOKEN` or `~/.kaggle/access_token`. See §2a.
 - **No Docker/sudo required.** The harness supports `--sandbox subprocess`; Phase 1 uses it when Docker is unavailable.
 - At least ~250 GB free disk (competition data + models + results).
 - The `submission-primary/` directory from this repo (the 5-min/24-call bundle).
@@ -49,6 +49,39 @@ Expected:
 If `nvidia-smi` fails, stop and fix the driver/container. Do not continue.
 
 ---
+
+## 2a. If Kaggle auth fails
+
+`OSError: Could not find kaggle.json` means the installed CLI is the old one that only reads legacy credentials. `~/.kaggle/access_token` is a new OAuth token, not a legacy API key.
+
+Fastest fix:
+
+1. Open https://www.kaggle.com/settings/api
+2. Under **Legacy API Credentials**, click **Create Legacy API Key**.
+3. Copy the downloaded `kaggle.json` to the remote box:
+   ```bash
+   mkdir -p ~/.kaggle
+   # from your local machine:
+   scp kaggle.json user@HOST:~/.kaggle/kaggle.json
+   # on the remote:
+   chmod 600 ~/.kaggle/kaggle.json
+   ```
+4. Test:
+   ```bash
+   kaggle competitions list -s gemma-4
+   ```
+
+Alternative if Python 3.11+ is available:
+
+```bash
+python3.11 -m venv ~/kaggle-cli-venv
+source ~/kaggle-cli-venv/bin/activate
+pip install -U kaggle
+export KAGGLE_API_TOKEN="$(cat ~/.kaggle/access_token)"
+kaggle competitions list -s gemma-4
+```
+
+Do not paste the token into chat. Do not use `sudo`.
 
 ## 2. Download competition data + wheelhouse
 

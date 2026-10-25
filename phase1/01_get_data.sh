@@ -7,6 +7,22 @@ WHEELS="${WHEELS:-$WORK/wheelhouse}"
 export WORK DATA WHEELS
 mkdir -p "$DATA" "$WHEELS"
 
+# New CLI: KAGGLE_API_TOKEN or ~/.kaggle/access_token. Old CLI: ~/.kaggle/kaggle.json.
+if [ -z "${KAGGLE_API_TOKEN:-}" ] && [ -f "$HOME/.kaggle/access_token" ]; then
+  export KAGGLE_API_TOKEN="$(cat "$HOME/.kaggle/access_token")"
+fi
+
+echo "== Checking Kaggle auth =="
+if ! kaggle competitions list -s gemma-4 >/dev/null 2>&1; then
+  echo
+  echo "Kaggle auth failed."
+  echo "The installed CLI may be the old one that only reads ~/.kaggle/kaggle.json."
+  echo "Fastest fix: Kaggle Settings -> API -> Legacy API Credentials -> Create Legacy API Key,"
+  echo "copy the downloaded kaggle.json to ~/.kaggle/kaggle.json, chmod 600, and rerun this script."
+  echo "Alternative: install the current CLI in a Python 3.11+ venv and use KAGGLE_API_TOKEN."
+  exit 1
+fi
+
 echo "== Downloading competition data =="
 kaggle competitions download -c gemma-4-developer-agent -p "$DATA" --unzip
 
