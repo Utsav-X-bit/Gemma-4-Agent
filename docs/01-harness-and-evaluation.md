@@ -243,7 +243,7 @@ The agent timer starts **after** container creation, wheel installation, and sna
 - CPU: 2 vCPUs (S5:237).
 - Working dir `/workspace`, `TEST_TMPDIR=/tmp` (S5:238).
 - Containers are not reused by default; warm pooling wipes `/workspace` and `/tmp` (S5:239).
-- Subprocess backend: isolated temp dir, rewritten paths, process-group kill on timeout (S5:240-242).
+- Subprocess backend: isolated temp dir, rewritten paths, process-group kill on timeout (S5:240-242). It is a fallback for no-Docker environments, not scorer-identical; Python version and isolation differ.
 
 ### 5.2 Bootstrap details that matter
 

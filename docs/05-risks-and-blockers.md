@@ -53,7 +53,7 @@ The two risks that lose the most work are **a broken local evaluator** and **a g
 **Mitigation:**
 
 - Use a calibrated scorer-like sandbox (S32) or rebuild the environment with the missing test packages.
-- Use Docker if available; subprocess is a fallback.
+- Use Docker if available. If you have no sudo/Docker, use subprocess for smoke tests only; calibrate gold patches in a clean venv or a Kaggle CPU notebook, because subprocess is not scorer-identical (Python version/isolation differ).
 - Hold out tasks/repos; don’t tune on all 129.
 - Use paired comparisons and 30–40 tasks; treat 1–2 task differences as noise.
 - Keep a run manifest (wheelhouse hash, Python version, model revision, prompt hash, seed).

@@ -323,6 +323,8 @@ docker image inspect swebench-sandbox:latest --format '{{.Id}}' | tee $WORK/env/
 
 If the Dockerfile context differs, follow the competition `docker/` instructions. Do not spend a week on a missing image; use the subprocess backend only as a fallback and record that it is not scorer-identical (S5:240).
 
+**No Docker / no sudo:** use `--sandbox subprocess` (S5:240). It creates an isolated temp workspace/venv and rewrites `/workspace` paths, but it is not scorer-identical: the remote venv may be Python 3.12 while the scorer image is Python 3.13, isolation is weaker, and wheel/test behavior can differ. Use subprocess for smoke tests; calibrate gold patches in a clean venv or a Kaggle CPU notebook, not subprocess alone.
+
 ### 3.3 Smoke test
 
 ```bash
