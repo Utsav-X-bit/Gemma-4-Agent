@@ -24,7 +24,18 @@ if ! kaggle competitions list -s gemma-4 >/dev/null 2>&1; then
 fi
 
 echo "== Downloading competition data =="
-kaggle competitions download -c gemma-4-developer-agent -p "$DATA" --unzip
+# The old CLI does not support --unzip; download, then extract any zips with Python.
+kaggle competitions download -c gemma-4-developer-agent -p "$DATA"
+
+python3 - "$DATA" <<'PY'
+import sys, zipfile
+from pathlib import Path
+d = Path(sys.argv[1])
+for z in sorted(d.glob("*.zip")):
+    print("extracting", z.name)
+    with zipfile.ZipFile(z) as zf:
+        zf.extractall(d)
+PY
 
 echo "== Checking task count =="
 python3 - <<'PY'
@@ -39,7 +50,7 @@ PY
 echo "== Downloading harness wheelhouse =="
 # The slug is inferred from the starter notebook's input path; if this 403s,
 # discover the current slug with: kaggle datasets list -s gemma-4
-if ! kaggle datasets download -d metric/gemma-4-developer-agent-wheelhouse -p "$WHEELS" --unzip; then
+if ! kaggle datasets download -d metric/gemma-4-developer-agent-wheelhouse -p "$WHEELS"; then
   echo
   echo "Wheelhouse download failed."
   echo "Open the competition Data tab or the starter notebook, download the wheelhouse dataset,"
@@ -47,6 +58,21 @@ if ! kaggle datasets download -d metric/gemma-4-developer-agent-wheelhouse -p "$
   exit 1
 fi
 
+python3 - "$WHEELS" <<'PY'
+import sys, zipfile
+from pathlib import Path
+d = Path(sys.argv[1])
+for z in sorted(d.glob("*.zip")):
+    print("extracting", z.name)
+    with zipfile.ZipFile(z) as zf:
+        zf.extractall(d)
+# Flatten nested wheel directories so $WHEELS/*.whl works.
+for w in list(d.rglob("*.whl")):
+    target = d / w.name
+    if w != target and not target.exists():
+        target.write_bytes(w.read_bytes())
+PY
+
 echo "== Wheel count =="
-ls "$WHEELS"/*.whl | wc -l
+find "$WHEELS" -maxdepth 1 -name '*.whl' | wc -l
 echo "Expected: a wheelhouse with the harness dependencies (the starter notebook staged 41 wheels)."
