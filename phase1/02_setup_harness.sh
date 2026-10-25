@@ -4,15 +4,29 @@ set -euo pipefail
 WORK="${WORK:-$HOME/gemma4}"
 WHEELS="${WHEELS:-$WORK/wheelhouse}"
 VENV="${VENV:-$WORK/harness-venv}"
-export WORK WHEELS VENV
+PYTHON_BIN="${PYTHON_BIN:-python3}"
+export WORK WHEELS VENV PYTHON_BIN
 
 if ! ls "$WHEELS"/*.whl >/dev/null 2>&1; then
   echo "No wheels found in $WHEELS. Run 01_get_data.sh or point WHEELS at the wheelhouse."
   exit 1
 fi
 
+echo "== Python =="
+"$PYTHON_BIN" --version
+"$PYTHON_BIN" - <<'PY'
+import sys
+print("python:", sys.version)
+if sys.version_info < (3, 11):
+    print("WARNING: the Kaggle wheelhouse may contain cp312/cp313 wheels; Python <3.11 can fail.")
+PY
+
 echo "== Creating harness venv =="
-python3 -m venv --system-site-packages "$VENV"
+if [ -d "$VENV" ]; then
+  echo "Removing existing venv at $VENV so the interpreter version can change"
+  rm -rf "$VENV"
+fi
+"$PYTHON_BIN" -m venv --system-site-packages "$VENV"
 # shellcheck disable=SC1090
 source "$VENV/bin/activate"
 
