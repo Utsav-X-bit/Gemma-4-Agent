@@ -39,7 +39,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-steps", type=int, default=-1)
     p.add_argument("--epochs", type=float, default=2.0)
     p.add_argument("--lr", type=float, default=1e-4)
-    p.add_argument("--max-length", type=int, default=8192)
+    p.add_argument("--max-length", type=int, default=2048)
     p.add_argument("--rank", type=int, default=16)
     p.add_argument("--alpha", type=int, default=16)
     p.add_argument("--grad-accum", type=int, default=8)
@@ -113,6 +113,8 @@ def main() -> None:
         bf16=True,
         gradient_checkpointing=True,
         gradient_checkpointing_kwargs={"use_reentrant": False},
+        optim="paged_adamw_8bit",
+        dataloader_num_workers=0,
         completion_only_loss=True,
         packing=False,
         report_to="none",
