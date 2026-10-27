@@ -224,7 +224,18 @@ Remote gained `requests_7427`; no Kaggle-resolved task was lost. `rich_4079` and
 
 The exact 0.24 prompt is now running as `remote-024` on the same 13 tasks.
 
-### 6.7 Calls32 second seed — unstable
+### 6.7 Exact 0.24 prompt remote A/B — rejected
+
+| Arm | Resolved | Patches | Mean | p95 |
+|---|---:|---:|---:|---:|
+| remote probe 28 | **3/13** | 11/13 | 162.8 s | 227.5 s |
+| remote exact 0.24 | 2/13 | 9/13 | 211.7 s | 381.9 s |
+
+The exact 0.24 prompt lost `fastapi_15589`, gained nothing, and produced fewer patches. The public 0.24 claim does not reproduce on this 13-task subset. The hidden submission `57709729` remains the authoritative test, but the local screen does not support adopting the 0.24 prompt.
+
+**Decision:** keep the probe prompt as the base. Next change is structural: a read-only explorer sub-agent for multi-file localization.
+
+### 6.8 Calls32 second seed — unstable
 
 | Run | Resolved | Patches | p50 | p95 | NO_PATCH |
 |---|---:|---:|---:|---:|---|
