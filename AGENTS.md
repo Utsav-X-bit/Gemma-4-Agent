@@ -89,6 +89,7 @@ python remote_eval.py --agent-dir ~/Gemma-4-Agent/submission-probe --tag remote-
   2. On the **login node** (internet), `cd ~/Gemma-4-Agent && git pull --ff-only`.
   3. Compute nodes read the same shared files; never run `git pull` on a compute node.
 - Do **not** commit `.kaggle/`, `.venv/`, `__pycache__/`, model weights, `/dev/shm` staging, logs, or `remote-results/`.
+- Canonical remote scripts are `phase5/remote_eval.py` and `phase5/remote_vllm_gemma4.sh`. The copies at `~/Gemma-4-Agent/remote_eval.py` and `remote_vllm_gemma4.sh` are legacy scp copies; remove them after the current baseline finishes.
 - `.kaggle/kaggle.json` was removed from the index; if it was ever pushed, rotate the Kaggle token. The local file stays on disk for CLI use.
 
 ## Competition state
