@@ -235,7 +235,37 @@ The exact 0.24 prompt lost `fastapi_15589`, gained nothing, and produced fewer p
 
 **Decision:** keep the probe prompt as the base. Next change is structural: a read-only explorer sub-agent for multi-file localization.
 
-### 6.8 Calls32 second seed — unstable
+### 6.8 Explorer sub-agent experiment
+
+The next structural arm is `phase5/submission-explorer`: the probe bundle plus a read-only `explorer_agent` sub-agent.
+
+- Sub-agent tools: `run_command`, `read_file`, `get_status`.
+- Its prompt requires exact files/lines, parallel implementations, root cause, edit plan, and a targeted test command, with at most 3 tool calls.
+- Main prompt calls `explorer_agent` once after the first search and uses its FILES/PARALLEL lists as the edit checklist.
+- Smoke task: `fastapi_15030`; the sub-agent was invoked at 9.2 s and read `fastapi/__init__.py`, confirming the `agent_tool` wiring works.
+
+If the smoke task shows no regression, run the full 13-task A/B against `remote-probe13`.
+
+### 6.9 Explorer sub-agent — rejected
+
+| Task | Probe | Explorer |
+|---|---|---|
+| `fastapi_15030` | 0, 1127-char patch | 0, 1109-char patch |
+| `rich_4079` | 0, NO_PATCH | 0, NO_PATCH |
+| `httpx_3672` | 0, 3-file patch | 0, 1-file patch |
+
+The explorer was invoked correctly (`explorer_agent` at 9.2 s), but it consumed main-agent budget and did not improve localization. On `httpx_3672` it produced a smaller, less complete patch than the probe. Reject.
+
+**Decision:** prompt and sub-agent tuning on the 13-task screen is exhausted. The remaining lever is model adaptation.
+
+### 6.10 Training pivot
+
+- Downloading the trainable checkpoint `google/gemma-4-31B-it-qat-q4_0-unquantized` on the login node to `~/gemma4/models/gemma-4-31B-qat-unquantized`.
+- First experiment: gold-patch SFT (rank-16 QLoRA, text backbone, response-only loss) on the 129 public tasks.
+- If the adapter is active and wins a paired 13-task A/B, test trajectory SFT next.
+- Do not submit an adapter until it beats the prompt-only baseline and passes the vLLM W4A16 activation check.
+
+### 6.11 Calls32 second seed — unstable
 
 | Run | Resolved | Patches | p50 | p95 | NO_PATCH |
 |---|---:|---:|---:|---:|---|
