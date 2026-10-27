@@ -27,6 +27,27 @@ If a command needs a GPU or more than trivial CPU, it belongs in a compute-node 
 - Compute-node local scratch: `/raid/user-$(id -u)`; stage large models/data there from shared storage.
 - Existing long-running Qwen inference job `541396` uses 4×A100 on `scn2-10g` until **2026-10-28 06:24**. Do not kill it without explicit permission; submit a separate job.
 
+### Training shell (1×A100)
+
+Training runs in a separate tmux session **`train`** on `scn6-mn`:
+
+```bash
+tmux attach -t train
+```
+
+Allocation:
+
+```bash
+srun --job-name=gemma4-train --partition=airawatp --nodelist=scn6-10g \
+  --gres=gpu:A100-SXM4:1 --cpus-per-task=4 --time=7-00:00:00 --pty bash -l
+```
+
+- Training venv: `~/gemma4/train-venv` (`torch 2.10.0`, `transformers 5.13.1`, `peft`, `trl`, `bitsandbytes`).
+- Trainable base: `~/gemma4/models/gemma-4-31B-qat-unquantized` (59 GB).
+- Data: `~/gemma4/sft/gold_sft.jsonl`; split `train_ids.json` / `holdout_ids.json` (116/13).
+- Adapter output: `~/gemma4/adapters/gold-sft-r16`.
+- The `scn19` allocation shares GPUs with another user's Flux training; do not train there. Use `train` for training, `gemma4` for serving/eval.
+
 ### Persistent compute shell (use this)
 
 A 7-day interactive allocation is held in tmux session **`gemma4`** on the login node:
