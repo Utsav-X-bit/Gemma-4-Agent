@@ -1,0 +1,555 @@
+id,repo,prediction,resolved,exit_code,patch_chars,tool_calls,duration_s
+fastapi_15661,fastapi/fastapi,"diff --git a/docs/en/docs/release-notes.md b/docs/en/docs/release-notes.md
+index 88302fa06..53c61ac35 100644
+--- a/docs/en/docs/release-notes.md
++++ b/docs/en/docs/release-notes.md
+@@ -7,6 +7,8 @@ hide:
+ 
+ ## Latest Changes
+ 
++## 0.136.4
++
+ ### Docs
+ 
+ * ✏️ Use `Annotated` in inline example in `docs/en/docs/tutorial/body-multiple-params.md`. PR [#15591](https://github.com/fastapi/fastapi/pull/15591) by [@TheArchons](https://github.com/TheArchons).
+diff --git a/fastapi/__init__.py b/fastapi/__init__.py
+index 38e747232..09c4dad35 100644
+--- a/fastapi/__init__.py
++++ b/fastapi/__init__.py
+@@ -1,6 +1,6 @@
+ """"""FastAPI framework, high performance, easy to learn, fast to code, ready for production""""""
+ 
+-__version__ = ""0.136.3""
++__version__ = ""0.136.4""
+ 
+ from starlette import status as status
+ 
+diff --git a/scripts/prepare_release.py b/scripts/prepare_release.py
+new file mode 100644
+index 000000000..b82e23e5d
+--- /dev/null
++++ b/scripts/prepare_release.py
+@@ -0,0 +1,55 @@
++import re
++import typer
++from pathlib import Path
++
++app = typer.Typer()
++
++@app.command()
++def prepare(version: str):
++    # 1. Update version in fastapi/__init__.py
++    # 1. Update version in fastapi/__init__.py
++    init_file = Path(""fastapi/__init__.py"")
++    content = init_file.read_text(encoding=""utf-8"")
++    new_content = re.sub(r'__version__ = "".*""', f'__version__ = ""{version}""', content)
++    init_file.write_text(new_content, encoding=""utf-8"")
++    print(f""Updated version to {version} in {init_file}"")
++
++    # 2. Update release notes
++    release_notes_file = Path(""docs/en/docs/release-notes.md"")
++    content = release_notes_file.read_text(encoding=""utf-8"")
++    
++    # Find ## Latest Changes
++    latest_changes_header = ""## Latest Changes""
++    if latest_changes_header not in content:
++        print(f""Could not find {latest_changes_header} in {release_notes_file}"")
++        return
++
++    # Split content into before, latest changes, and after
++    # We want to find the content between ""## Latest Changes"" and the next ""## ""
++    
++    # Use regex to find the section
++    # This regex finds ""## Latest Changes"" and everything until the next ""## "" or end of file
++    pattern = re.compile(r""(## Latest Changes\s*)(.*?)(?=\n## |\Z)"", re.DOTALL)
++    match = pattern.search(content)
++    
++    if not match:
++        print(f""Could not find content for {latest_changes_header}"")
++        return
++    
++    changes = match.group(2).strip()
++    
++    if not changes:
++        print(""No changes to move."")
++        return
++
++    # Construct new content
++    # We replace the matched part with the new section
++    new_section = f""## Latest Changes\n\n## {version}\n\n{changes}\n""
++    
++    new_content = content[:match.start()] + new_section + content[match.end():]
++    
++    release_notes_file.write_text(new_content, encoding=""utf-8"")
++    print(f""Moved latest changes to version {version} in {release_notes_file}"")
++
++if __name__ == ""__main__"":
++    app()",False,2,2960,32,406.12219430999994
+fastapi_15588,fastapi/fastapi,"diff --git a/fastapi/sse.py b/fastapi/sse.py
+index 901d82496..27d9b9e43 100644
+--- a/fastapi/sse.py
++++ b/fastapi/sse.py
+@@ -33,9 +33,18 @@ class EventSourceResponse(StreamingResponse):
+     media_type = ""text/event-stream""
+ 
+ 
+-def _check_id_no_null(v: str | None) -> str | None:
+-    if v is not None and ""\0"" in v:
+-        raise ValueError(""SSE 'id' must not contain null characters"")
++def _check_id_no_null_or_newline(v: str | None) -> str | None:
++    if v is not None:
++        if ""\0"" in v:
++            raise ValueError(""SSE 'id' must not contain null characters"")
++        if ""\n"" in v or ""\r"" in v:
++            raise ValueError(""SSE 'id' must not contain newlines"")
++    return v
++
++
++def _check_event_no_newlines(v: str | None) -> str | None:
++    if v is not None and (""\n"" in v or ""\r"" in v):
++        raise ValueError(""SSE 'event' must not contain newlines"")
+     return v
+ 
+ 
+@@ -86,6 +95,7 @@ class ServerSentEvent(BaseModel):
+     ] = None
+     event: Annotated[
+         str | None,
++        AfterValidator(_check_event_no_newlines),
+         Doc(
+             """"""
+             Optional event type name.
+@@ -97,13 +107,13 @@ class ServerSentEvent(BaseModel):
+     ] = None
+     id: Annotated[
+         str | None,
+-        AfterValidator(_check_id_no_null),
++        AfterValidator(_check_id_no_null_or_newline),
+         Doc(
+             """"""
+             Optional event ID.
+ 
+             The browser sends this value back as the `Last-Event-ID` header on
+-            automatic reconnection. **Must not contain null (`\\0`) characters.**
++            automatic reconnection. **Must not contain null (`\\0`) or newline characters.**
+             """"""
+         ),
+     ] = None",False,1,1697,22,269.03877242499993
+fastapi_15589,fastapi/fastapi,"diff --git a/fastapi/dependencies/utils.py b/fastapi/dependencies/utils.py
+index 7c6558c69..6745c9051 100644
+--- a/fastapi/dependencies/utils.py
++++ b/fastapi/dependencies/utils.py
+@@ -830,6 +830,8 @@ def request_params_to_args(
+     for key in received_params.keys():
+         if key not in processed_keys:
+             if isinstance(received_params, (ImmutableMultiDict, Headers)):
++                if default_convert_underscores and ""_"" in key:
++                    continue
+                 value = received_params.getlist(key)
+                 if isinstance(value, list) and (len(value) == 1):
+                     params_to_process[key] = value[0]
+@@ -850,7 +852,14 @@ def request_params_to_args(
+         return {first_field.name: v_}, errors_
+ 
+     for field in fields:
+-        value = _get_multidict_value(field, received_params)
++        alias = None
++        if isinstance(received_params, Headers):
++            convert_underscores = getattr(field.field_info, ""convert_underscores"", True)
++            if convert_underscores:
++                alias = get_validation_alias(field)
++                if alias == field.name:
++                    alias = alias.replace(""_"", ""-"")
++        value = _get_multidict_value(field, received_params, alias=alias)
+         field_info = field.field_info
+         assert isinstance(field_info, params.Param), (
+             ""Params must be subclasses of Param""",True,0,1406,32,371.0572900750001
+fastapi_15030,fastapi/fastapi,"diff --git a/fastapi/responses.py b/fastapi/responses.py
+index 5b1154c0..d975699a 100644
+--- a/fastapi/responses.py
++++ b/fastapi/responses.py
+@@ -82,3 +82,32 @@ class ORJSONResponse(JSONResponse):
+         return orjson.dumps(
+             content, option=orjson.OPT_NON_STR_KEYS | orjson.OPT_SERIALIZE_NUMPY
+         )
++
++
++class SSEResponse(StreamingResponse):
++    """"""SSE response for Server-Sent Events.
++
++    This response sets the `Content-Type` to `text/event-stream`,
++    `Cache-Control` to `no-cache`, and `Connection` to `keep-alive`.
++    """"""
++
++    def __init__(
++        self,
++        content,
++        status_code: int = 200,
++        headers: Any = None,
++        background: Any = None,
++        media_type: str = ""text/event-stream"",
++    ):
++        if headers is None:
++            headers = {}
++        headers[""Cache-Control""] = ""no-cache""
++        headers[""Connection""] = ""keep-alive""
++        super().__init__(
++            content,
++            status_code=status_code,
++            headers=headers,
++            background=background,
++            media_type=media_type,
++        )
++",False,2,1112,14,177.07706066599985
+requests_7505,psf/requests,"diff --git a/src/requests/_types.py b/src/requests/_types.py
+index b2273d61..8f03e0f2 100644
+--- a/src/requests/_types.py
++++ b/src/requests/_types.py
+@@ -47,6 +47,11 @@ def is_prepared(request: PreparedRequest) -> TypeIs[_ValidatedRequest]:
+     return True
+ 
+ 
++def is_supports_read(obj: Any) -> TypeIs[SupportsRead]:
++    """"""Verify an object supports the read protocol.""""""
++    return isinstance(obj, SupportsRead) or hasattr(obj, ""read"")
++
++
+ if TYPE_CHECKING:
+     from http.cookiejar import CookieJar
+     from typing import TypeAlias, TypedDict
+diff --git a/src/requests/models.py b/src/requests/models.py
+index ebeba1e3..986f13bd 100644
+--- a/src/requests/models.py
++++ b/src/requests/models.py
+@@ -36,7 +36,7 @@ from urllib3.filepost import encode_multipart_formdata
+ from urllib3.util import parse_url
+ 
+ from ._internal_utils import to_native_string, unicode_is_ascii
+-from ._types import SupportsRead as _SupportsRead
++from ._types import SupportsRead as _SupportsRead, is_supports_read as _is_supports_read
+ from .auth import HTTPBasicAuth
+ from .compat import (
+     JSONDecodeError,
+@@ -161,7 +161,7 @@ class RequestEncodingMixin:
+ 
+         if isinstance(data, (str, bytes)):
+             return data
+-        elif isinstance(data, _SupportsRead):
++        elif _is_supports_read(data):
+             return data
+         elif hasattr(data, ""__iter__""):
+             result: list[tuple[bytes, bytes]] = []
+@@ -238,7 +238,7 @@ class RequestEncodingMixin:
+                 fdata = fp
+             # data that proxies attributes to underlying objects needs hasattr
+             # defensive check for untyped callers
+-            elif isinstance(fp, _SupportsRead) or hasattr(fp, ""read""):
++            elif _is_supports_read(fp):
+                 fdata = fp.read()
+             elif fp is None:  # defensive check for untyped callers
+                 continue
+@@ -641,7 +641,7 @@ class PreparedRequest(RequestEncodingMixin, RequestHooksMixin):
+             else:
+                 if raw_data:
+                     body = self._encode_params(raw_data)
+-                    if isinstance(data, basestring) or isinstance(data, _SupportsRead):
++                    if isinstance(data, basestring) or _is_supports_read(data):
+                         content_type = None
+                     else:
+                         content_type = ""application/x-www-form-urlencoded""",False,1,2379,32,327.3404540440001
+requests_7502,psf/requests,"diff --git a/repro_bug.py b/repro_bug.py
+new file mode 100644
+index 00000000..adc1010d
+--- /dev/null
++++ b/repro_bug.py
+@@ -0,0 +1,35 @@
++import requests
++from requests.models import Request
++
++class FileWrapper:
++    def __init__(self):
++        self.read_called = False
++
++    def __getattr__(self, name):
++        if name == 'read':
++            def read_method(length=None):
++                print(""DEBUG: read() called!"")
++                self.read_called = True
++                return b""file content""
++            return read_method
++        if name == 'name':
++            return ""testfile.txt""
++        raise AttributeError(name)
++
++def test_encode_files_with_getattr_wrapper():
++    fw = FileWrapper()
++    files = {'file': fw}
++    s = requests.Session()
++    pr = s.prepare_request(requests.Request('POST', 'http://example.com', files=files))
++    assert fw.read_called, ""read() was not called on FileWrapper""
++    assert b""file content"" in pr.body
++
++if __name__ == ""__main__"":
++    try:
++        test_encode_files_with_getattr_wrapper()
++        print(""Test passed!"")
++    except Exception as e:
++        print(f""Test failed: {e}"")
++        import traceback
++        traceback.print_exc()
++        exit(1)
+diff --git a/src/requests/models.py b/src/requests/models.py
+index c4cc028e..31f8a88d 100644
+--- a/src/requests/models.py
++++ b/src/requests/models.py
+@@ -161,7 +161,7 @@ class RequestEncodingMixin:
+ 
+         if isinstance(data, (str, bytes)):
+             return data
+-        elif isinstance(data, _SupportsRead):
++        elif isinstance(data, _SupportsRead) or hasattr(data, 'read'):
+             return data
+         elif hasattr(data, ""__iter__""):
+             result: list[tuple[bytes, bytes]] = []
+@@ -236,7 +236,7 @@ class RequestEncodingMixin:
+ 
+             if isinstance(fp, (str, bytes, bytearray)):
+                 fdata = fp
+-            elif isinstance(fp, _SupportsRead):  # defensive check for untyped callers
++            elif isinstance(fp, _SupportsRead) or hasattr(fp, 'read'):  # defensive check for untyped callers
+                 fdata = fp.read()
+             elif fp is None:  # defensive check for untyped callers
+                 continue
+@@ -639,7 +639,7 @@ class PreparedRequest(RequestEncodingMixin, RequestHooksMixin):
+             else:
+                 if raw_data:
+                     body = self._encode_params(raw_data)
+-                    if isinstance(data, basestring) or isinstance(data, _SupportsRead):
++                    if isinstance(data, basestring) or isinstance(data, _SupportsRead) or hasattr(data, 'read'):
+                         content_type = None
+                     else:
+                         content_type = ""application/x-www-form-urlencoded""",False,1,2732,30,506.7780844120002
+requests_7433,psf/requests,"diff --git a/src/requests/models.py b/src/requests/models.py
+index 4142f2a4..628e1e81 100644
+--- a/src/requests/models.py
++++ b/src/requests/models.py
+@@ -596,9 +596,10 @@ class PreparedRequest(RequestEncodingMixin, RequestHooksMixin):
+             if not isinstance(body, bytes):
+                 body = body.encode(""utf-8"")
+ 
+-        if isinstance(data, Iterable) and not isinstance(
+-            data, (str, bytes, list, tuple, Mapping)
+-        ):
++        if (
++            isinstance(data, Iterable) or hasattr(data, ""__iter__"")
++        ) and not isinstance(data, (str, bytes, list, tuple, Mapping)):
++
+             try:
+                 length = super_len(data)
+             except (TypeError, AttributeError, UnsupportedOperation):",False,1,741,32,301.638357156
+requests_7427,psf/requests,"diff --git a/src/requests/utils.py b/src/requests/utils.py
+index e69ad0d7..0482bd53 100644
+--- a/src/requests/utils.py
++++ b/src/requests/utils.py
+@@ -851,10 +851,14 @@ def should_bypass_proxies(url: str, no_proxy: str | None) -> bool:
+                 host_with_port += f"":{parsed.port}""
+ 
+             for host in no_proxy_hosts:
+-                if hostname.endswith(host) or host_with_port.endswith(host):
+-                    # The URL does match something in no_proxy, so we don't want
+-                    # to apply the proxies on this URL.
+-                    return True
++                target = host_with_port if "":"" in host else hostname
++                if host.startswith("".""):
++                    if target.endswith(host):
++                        return True
++                else:
++                    if target == host or target.endswith(""."" + host):
++                        return True
++            return False
+ 
+     with set_environ(""no_proxy"", no_proxy_arg):
+         try:",False,1,999,21,484.9368803479997
+rich_4070,Textualize/rich,"diff --git a/rich/console.py b/rich/console.py
+index ad92d529..ab5c39fc 100644
+--- a/rich/console.py
++++ b/rich/console.py
+@@ -1,15 +1,10 @@
+-import inspect
+ import os
+ import sys
+ import threading
+-import zlib
+ from abc import ABC, abstractmethod
+ from dataclasses import dataclass, field
+ from datetime import datetime
+ from functools import wraps
+-from getpass import getpass
+-from html import escape
+-from inspect import isclass
+ from itertools import islice
+ from math import ceil
+ from time import monotonic
+diff --git a/rich/logging.py b/rich/logging.py
+index c3e7a5f6..ab193be2 100644
+--- a/rich/logging.py
++++ b/rich/logging.py
+@@ -1,18 +1,23 @@
++from __future__ import annotations
++
+ import logging
++import os
+ from datetime import datetime
+ from logging import Handler, LogRecord
+-from pathlib import Path
+ from types import ModuleType
+-from typing import ClassVar, Iterable, List, Optional, Type, Union
++from typing import TYPE_CHECKING, ClassVar, Iterable, List, Optional, Type, Union
++
++if TYPE_CHECKING:
++    from ._log_render import FormatTimeCallable
++    from .console import Console, ConsoleRenderable
++    from .highlighter import Highlighter
+ 
+ from rich._null_file import NullFile
+ 
+ from . import get_console
+-from ._log_render import FormatTimeCallable, LogRender
+-from .console import Console, ConsoleRenderable
+-from .highlighter import Highlighter, ReprHighlighter
++from ._log_render import LogRender
++from .highlighter import ReprHighlighter
+ from .text import Text
+-from .traceback import Traceback
+ 
+ 
+ class RichHandler(Handler):
+@@ -138,6 +143,7 @@ class RichHandler(Handler):
+             and record.exc_info
+             and record.exc_info != (None, None, None)
+         ):
++            from .traceback import Traceback
+             exc_type, exc_value, exc_traceback = record.exc_info
+             assert exc_type is not None
+             assert exc_value is not None",False,1,1903,32,319.1850125110004
+rich_4077,Textualize/rich,"diff --git a/rich/file_proxy.py b/rich/file_proxy.py
+index 4b0b0da6..713926c8 100644
+--- a/rich/file_proxy.py
++++ b/rich/file_proxy.py
+@@ -53,5 +53,8 @@ class FileProxy(io.TextIOBase):
+             self.__console.print(output)
+         del self.__buffer[:]
+ 
++    def isatty(self) -> bool:
++        return self.__file.isatty()
++
+     def fileno(self) -> int:
+         return self.__file.fileno()",True,0,395,18,149.92173165800068
+rich_4079,Textualize/rich,"diff --git a/rich/markdown.py b/rich/markdown.py
+index 1e28343e..4412a07c 100644
+--- a/rich/markdown.py
++++ b/rich/markdown.py
+@@ -331,9 +331,7 @@ class TableDataElement(MarkdownElement):
+         self.justify = justify
+ 
+     def on_text(self, context: MarkdownContext, text: TextType) -> None:
+-        text = Text(text) if isinstance(text, str) else text
+-        text.stylize(context.current_style)
+-        self.content.append_text(text)
++        self.content.append(text, context.current_style if isinstance(text, str) else None)
+ 
+ 
+ class ListElement(MarkdownElement):",True,0,576,32,184.24083167499975
+rich_4076,Textualize/rich,NO_PATCH,False,-1,0,32,429.9979252429994
+httpx_3672,encode/httpx,"diff --git a/src/httpx/_network.py b/src/httpx/_network.py
+index 5ea9bb5..d75c57b 100644
+--- a/src/httpx/_network.py
++++ b/src/httpx/_network.py
+@@ -160,7 +160,7 @@ class NetworkServer:
+         self._max_workers = 5
+         self._executor = None
+         self._thread = None
+-        self._streams = list[NetworkStream]
++        self._streams: list[NetworkStream] = []
+ 
+     @property
+     def host(self):
+@@ -177,10 +177,13 @@ class NetworkServer:
+ 
+     def __exit__(self, exc_type, exc_val, exc_tb):
+         self.listener.close()
++        for stream in self._streams:
++            stream.close()
+         self._executor.shutdown(wait=True)
+ 
+     def _serve(self):
+         while stream := self.listener.accept():
++            self._streams.append(stream)
+             self._executor.submit(self._handler, stream)
+ 
+     def _handler(self, stream):
+@@ -188,6 +191,8 @@ class NetworkServer:
+             self.handler(stream)
+         finally:
+             stream.close()
++            if stream in self._streams:
++                self._streams.remove(stream)
+ 
+ 
+ class NetworkBackend:
+diff --git a/src/httpx/_parsers.py b/src/httpx/_parsers.py
+index 830fccd..59ab34c 100644
+--- a/src/httpx/_parsers.py
++++ b/src/httpx/_parsers.py
+@@ -106,6 +106,15 @@ class HTTPParser:
+         self.send_keep_alive = True
+         self.recv_keep_alive = True
+ 
++    @property
++    def keep_alive(self) -> bool:
++        return self.send_keep_alive and self.recv_keep_alive
++
++    @keep_alive.setter
++    def keep_alive(self, value: bool) -> None:
++        self.send_keep_alive = value
++        self.recv_keep_alive = value
++
+         # Special states...
+         self.processing_1xx = False
+ 
+@@ -375,7 +384,7 @@ class HTTPParser:
+             self.recv_state = State.DONE
+         return body
+ 
+-    def complete(self):
++    def reset(self):
+         is_fully_complete = self.send_state == State.DONE and self.recv_state == State.DONE
+         is_keepalive = self.send_keep_alive and self.recv_keep_alive
+ 
+diff --git a/src/httpx/_server.py b/src/httpx/_server.py
+index 95226d9..57d08f4 100644
+--- a/src/httpx/_server.py
++++ b/src/httpx/_server.py
+@@ -89,7 +89,10 @@ class HTTPConnection:
+ 
+     # Start it all over again...
+     def _complete(self):
+-        self._parser.complete
++        if self._parser.recv_keep_alive:
++            while self._parser.recv_body() != b'':
++                pass
++        self._parser.reset()
+         self._idle_expiry = time.monotonic() + self._keepalive_duration
+ 
+ 
+@@ -122,5 +125,8 @@ def serve_http(endpoint):
+ 
+ 
+ def run(app):
+-    with serve_http(app) as server:
+-        server.wait()
++    try:
++        with serve_http(app) as server:
++            server.wait()
++    except KeyboardInterrupt:
++        pass",False,2,2743,23,240.157337998

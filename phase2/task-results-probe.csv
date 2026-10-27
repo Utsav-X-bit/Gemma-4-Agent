@@ -1,0 +1,622 @@
+id,repo,prediction,resolved,exit_code,patch_chars,tool_calls,duration_s
+fastapi_15661,fastapi/fastapi,"diff --git a/scripts/add_latest_release_date.py b/scripts/add_latest_release_date.py
+index f20b727e7..351d70266 100644
+--- a/scripts/add_latest_release_date.py
++++ b/scripts/add_latest_release_date.py
+@@ -22,7 +22,7 @@ def main() -> None:
+ 
+         if date_part:
+             print(f""Latest release {version} already has a date: {date_part}"")
+-            sys.exit(0)
++            return
+ 
+         today = date.today().isoformat()
+         lines[i] = f""## {version} ({today})\n""
+@@ -30,7 +30,7 @@ def main() -> None:
+ 
+         with open(RELEASE_NOTES_FILE, ""w"") as f:
+             f.writelines(lines)
+-        sys.exit(0)
++        return
+ 
+     print(""No release header found"")
+     sys.exit(1)
+diff --git a/scripts/release.py b/scripts/release.py
+new file mode 100644
+index 000000000..dc0419f13
+--- /dev/null
++++ b/scripts/release.py
+@@ -0,0 +1,73 @@
++""""""Script to prepare a new release.""""""
++
++import sys
++import re
++import subprocess
++from pathlib import Path
++
++def main():
++    if len(sys.argv) < 2:
++        print(""Usage: python scripts/release.py <version>"")
++        sys.exit(1)
++    
++    new_version = sys.argv[1]
++    
++    # 1. Update fastapi/__init__.py
++    init_file = Path(""fastapi/__init__.py"")
++    content = init_file.read_text()
++    if not re.search(r'__version__ = ""[^""]+""', content):
++        print(f""Could not find __version__ in {init_file}"")
++        sys.exit(1)
++    content = re.sub(r'__version__ = ""[^""]+""', f'__version__ = ""{new_version}""', content)
++    init_file.write_text(content)
++    print(f""Updated version to {new_version} in {init_file}"")
++    
++    # 2. Update docs/en/docs/release-notes.md
++    rn_file = Path(""docs/en/docs/release-notes.md"")
++    if not rn_file.exists():
++        print(f""Release notes file not found: {rn_file}"")
++        sys.exit(1)
++        
++    lines = rn_file.read_text().splitlines(keepends=True)
++    
++    # Check if version already exists
++    if any(re.match(rf""^## {re.escape(new_version)}(\s*\(.*\))?$"", line) for line in lines):
++        print(f""Version {new_version} already exists in release notes"")
++        sys.exit(1)
++
++    # Find ""## Latest Changes"" and the first version header
++    latest_changes_idx = -1
++    first_version_idx = -1
++    
++    for i, line in enumerate(lines):
++        if line.strip() == ""## Latest Changes"":
++            latest_changes_idx = i
++        if re.match(r""^## \d+\.\d+\.\d+"", line):
++            first_version_idx = i
++            break
++            
++    if latest_changes_idx == -1:
++        print(""Could not find '## Latest Changes' in release notes"")
++        sys.exit(1)
++        
++    if first_version_idx == -1:
++        print(""Could not find any existing version header in release notes"")
++        sys.exit(1)
++        
++    # Insert ""## <version>"" after ""## Latest Changes""
++    # This moves the content of ""Latest Changes"" to the new version.
++    lines.insert(latest_changes_idx + 1, f""## {new_version}\n\n"")
++    rn_file.write_text("""".join(lines))
++    print(f""Added version header {new_version} to {rn_file}"")
++    
++    # 3. Run scripts/add_latest_release_date.py
++    # We use sys.executable to ensure we use the same python interpreter
++    result = subprocess.run([sys.executable, ""scripts/add_latest_release_date.py""], capture_output=True, text=True)
++    if result.returncode != 0:
++        print(f""Error running add_latest_release_date.py: {result.stderr}"")
++        sys.exit(result.returncode)
++    print(result.stdout.strip())
++    print(""Updated release date in release notes"")
++
++if __name__ == ""__main__"":
++    main()",False,2,3556,28,474.63274343300054
+fastapi_15588,fastapi/fastapi,"diff --git a/fastapi/sse.py b/fastapi/sse.py
+index 901d82496..3b01c7fab 100644
+--- a/fastapi/sse.py
++++ b/fastapi/sse.py
+@@ -33,9 +33,18 @@ class EventSourceResponse(StreamingResponse):
+     media_type = ""text/event-stream""
+ 
+ 
+-def _check_id_no_null(v: str | None) -> str | None:
+-    if v is not None and ""\0"" in v:
+-        raise ValueError(""SSE 'id' must not contain null characters"")
++def _check_id_no_null_or_newlines(v: str | None) -> str | None:
++    if v is not None:
++        if ""\0"" in v:
++            raise ValueError(""SSE 'id' must not contain null characters"")
++        if ""\n"" in v or ""\r"" in v:
++            raise ValueError(""SSE 'id' must not contain newlines"")
++    return v
++
++
++def _check_event_no_newlines(v: str | None) -> str | None:
++    if v is not None and (""\n"" in v or ""\r"" in v):
++        raise ValueError(""SSE 'event' must not contain newlines"")
+     return v
+ 
+ 
+@@ -86,6 +95,7 @@ class ServerSentEvent(BaseModel):
+     ] = None
+     event: Annotated[
+         str | None,
++        AfterValidator(_check_event_no_newlines),
+         Doc(
+             """"""
+             Optional event type name.
+@@ -97,7 +107,7 @@ class ServerSentEvent(BaseModel):
+     ] = None
+     id: Annotated[
+         str | None,
+-        AfterValidator(_check_id_no_null),
++        AfterValidator(_check_id_no_null_or_newlines),
+         Doc(
+             """"""
+             Optional event ID.
+@@ -197,6 +207,7 @@ def format_sse_event(
+             lines.append(f"": {line}"")
+ 
+     if event is not None:
++        _check_event_no_newlines(event)
+         lines.append(f""event: {event}"")
+ 
+     if data_str is not None:
+@@ -204,6 +215,7 @@ def format_sse_event(
+             lines.append(f""data: {line}"")
+ 
+     if id is not None:
++        _check_id_no_null_or_newlines(id)
+         lines.append(f""id: {id}"")
+ 
+     if retry is not None:",False,1,1837,21,339.2078588389995
+fastapi_15589,fastapi/fastapi,"diff --git a/fastapi/dependencies/utils.py b/fastapi/dependencies/utils.py
+index 7c6558c69..9d8dcc1f6 100644
+--- a/fastapi/dependencies/utils.py
++++ b/fastapi/dependencies/utils.py
+@@ -825,7 +825,9 @@ def request_params_to_args(
+         value = _get_multidict_value(field, received_params, alias=alias)
+         if value is not None:
+             params_to_process[get_validation_alias(field)] = value
+-        processed_keys.add(alias or get_validation_alias(field))
++        processed_keys.add(get_validation_alias(field))
++        if alias:
++            processed_keys.add(alias)
+ 
+     for key in received_params.keys():
+         if key not in processed_keys:",True,0,664,28,373.41413135699986
+fastapi_15030,fastapi/fastapi,"diff --git a/fastapi/responses.py b/fastapi/responses.py
+index 5b1154c0..09ac36ae 100644
+--- a/fastapi/responses.py
++++ b/fastapi/responses.py
+@@ -82,3 +82,26 @@ class ORJSONResponse(JSONResponse):
+         return orjson.dumps(
+             content, option=orjson.OPT_NON_STR_KEYS | orjson.OPT_SERIALIZE_NUMPY
+         )
++
++class EventSourceResponse(StreamingResponse):
++    """"""
++    SSE response.
++    """"""
++    def __init__(
++        self,
++        content,
++        status_code: int = 200,
++        headers: dict[str, str] | None = None,
++        background: Any = None,
++    ):
++        headers = headers.copy() if headers is not None else {}
++        headers[""Cache-Control""] = ""no-cache""
++        headers[""Connection""] = ""keep-alive""
++        super().__init__(
++            content,
++            status_code=status_code,
++            headers=headers,
++            background=background,
++            media_type=""text/event-stream"",
++        )
++",False,2,949,18,355.9790370790006
+requests_7505,psf/requests,"diff --git a/src/requests/_types.py b/src/requests/_types.py
+index b2273d61..9c795fc5 100644
+--- a/src/requests/_types.py
++++ b/src/requests/_types.py
+@@ -15,6 +15,7 @@ from typing import (
+     Any,
+     Protocol,
+     TypeAlias,
++    TypeGuard,
+     TypeVar,
+     runtime_checkable,
+ )
+@@ -34,6 +35,16 @@ class SupportsItems(Protocol[_KT_co, _VT_co]):
+     def items(self) -> Iterable[tuple[_KT_co, _VT_co]]: ...
+ 
+ 
++def is_supports_read(obj: Any) -> TypeGuard[SupportsRead]:
++    """"""Check if an object supports the read method.""""""
++    return isinstance(obj, SupportsRead) or hasattr(obj, ""read"")
++
++
++def is_supports_items(obj: Any) -> TypeGuard[SupportsItems]:
++    """"""Check if an object supports the items method.""""""
++    return isinstance(obj, SupportsItems) or hasattr(obj, ""items"")
++
++
+ # These are needed at runtime for default_hooks() return type
+ HookType: TypeAlias = Callable[[""Response""], Any]
+ HooksInputType: TypeAlias = Mapping[str, Iterable[HookType] | HookType]
+diff --git a/src/requests/models.py b/src/requests/models.py
+index ebeba1e3..e464b4b9 100644
+--- a/src/requests/models.py
++++ b/src/requests/models.py
+@@ -36,7 +36,7 @@ from urllib3.filepost import encode_multipart_formdata
+ from urllib3.util import parse_url
+ 
+ from ._internal_utils import to_native_string, unicode_is_ascii
+-from ._types import SupportsRead as _SupportsRead
++from ._types import SupportsRead as _SupportsRead, is_supports_read
+ from .auth import HTTPBasicAuth
+ from .compat import (
+     JSONDecodeError,
+@@ -161,7 +161,7 @@ class RequestEncodingMixin:
+ 
+         if isinstance(data, (str, bytes)):
+             return data
+-        elif isinstance(data, _SupportsRead):
++        elif is_supports_read(data):
+             return data
+         elif hasattr(data, ""__iter__""):
+             result: list[tuple[bytes, bytes]] = []
+@@ -238,7 +238,7 @@ class RequestEncodingMixin:
+                 fdata = fp
+             # data that proxies attributes to underlying objects needs hasattr
+             # defensive check for untyped callers
+-            elif isinstance(fp, _SupportsRead) or hasattr(fp, ""read""):
++            elif is_supports_read(fp):
+                 fdata = fp.read()
+             elif fp is None:  # defensive check for untyped callers
+                 continue
+@@ -641,7 +641,7 @@ class PreparedRequest(RequestEncodingMixin, RequestHooksMixin):
+             else:
+                 if raw_data:
+                     body = self._encode_params(raw_data)
+-                    if isinstance(data, basestring) or isinstance(data, _SupportsRead):
++                    if isinstance(data, basestring) or is_supports_read(data):
+                         content_type = None
+                     else:
+                         content_type = ""application/x-www-form-urlencoded""
+diff --git a/src/requests/utils.py b/src/requests/utils.py
+index fff6edf4..36d32f46 100644
+--- a/src/requests/utils.py
++++ b/src/requests/utils.py
+@@ -42,7 +42,7 @@ from ._internal_utils import (  # noqa: F401
+     HEADER_VALIDATORS,
+     to_native_string,
+ )
+-from ._types import SupportsItems as _SupportsItems
++from ._types import SupportsItems as _SupportsItems, is_supports_items
+ from .compat import (
+     Mapping,
+     bytes,",False,1,3220,28,452.7384012860002
+requests_7502,psf/requests,"diff --git a/reproduce_bug.py b/reproduce_bug.py
+new file mode 100644
+index 00000000..3b3d1f69
+--- /dev/null
++++ b/reproduce_bug.py
+@@ -0,0 +1,20 @@
++from typing import Protocol, runtime_checkable
++
++@runtime_checkable
++class SupportsRead(Protocol):
++    def read(self, length: int = ...):
++        ...
++
++class FileWrapper:
++    def __init__(self, fileobj):
++        self._fileobj = fileobj
++
++    def __getattr__(self, name):
++        return getattr(self._fileobj, name)
++
++import io
++f = io.BytesIO(b""hello"")
++wrapper = FileWrapper(f)
++
++print(f""Has read: {hasattr(wrapper, 'read')}"")
++print(f""Is instance of SupportsRead: {isinstance(wrapper, SupportsRead)}"")
+diff --git a/src/requests/models.py b/src/requests/models.py
+index c4cc028e..b7f8f2ec 100644
+--- a/src/requests/models.py
++++ b/src/requests/models.py
+@@ -161,7 +161,7 @@ class RequestEncodingMixin:
+ 
+         if isinstance(data, (str, bytes)):
+             return data
+-        elif isinstance(data, _SupportsRead):
++        elif hasattr(data, ""read""):
+             return data
+         elif hasattr(data, ""__iter__""):
+             result: list[tuple[bytes, bytes]] = []
+@@ -236,7 +236,7 @@ class RequestEncodingMixin:
+ 
+             if isinstance(fp, (str, bytes, bytearray)):
+                 fdata = fp
+-            elif isinstance(fp, _SupportsRead):  # defensive check for untyped callers
++            elif hasattr(fp, ""read""):  # defensive check for untyped callers
+                 fdata = fp.read()
+             elif fp is None:  # defensive check for untyped callers
+                 continue
+@@ -639,7 +639,7 @@ class PreparedRequest(RequestEncodingMixin, RequestHooksMixin):
+             else:
+                 if raw_data:
+                     body = self._encode_params(raw_data)
+-                    if isinstance(data, basestring) or isinstance(data, _SupportsRead):
++                    if isinstance(data, basestring) or hasattr(data, ""read""):
+                         content_type = None
+                     else:
+                         content_type = ""application/x-www-form-urlencoded""",False,1,2073,28,449.82179810399975
+requests_7433,psf/requests,"diff --git a/src/requests/models.py b/src/requests/models.py
+index 4142f2a4..93744eee 100644
+--- a/src/requests/models.py
++++ b/src/requests/models.py
+@@ -596,7 +596,9 @@ class PreparedRequest(RequestEncodingMixin, RequestHooksMixin):
+             if not isinstance(body, bytes):
+                 body = body.encode(""utf-8"")
+ 
+-        if isinstance(data, Iterable) and not isinstance(
++        if (
++            isinstance(data, Iterable) or hasattr(data, ""__iter__"")
++        ) and not isinstance(
+             data, (str, bytes, list, tuple, Mapping)
+         ):
+             try:",False,1,583,21,187.51812372600034
+requests_7427,psf/requests,"diff --git a/repro.py b/repro.py
+new file mode 100644
+index 00000000..c8f0a1a8
+--- /dev/null
++++ b/repro.py
+@@ -0,0 +1,7 @@
++from requests.utils import should_bypass_proxies
++tests = [('http://example.com', '.example.com', False)]
++for u, n, e in tests:
++    res = should_bypass_proxies(u, n)
++    print(f'URL: {u}, no_proxy: {n}, expected: {e}, result: {res}')
++    if res != e:
++        print(""FAILED"")
+diff --git a/src/requests/utils.py b/src/requests/utils.py
+index e69ad0d7..b35abf80 100644
+--- a/src/requests/utils.py
++++ b/src/requests/utils.py
+@@ -846,12 +846,26 @@ def should_bypass_proxies(url: str, no_proxy: str | None) -> bool:
+                     # matches the IP of the index
+                     return True
+         else:
+-            host_with_port = hostname
+-            if parsed.port:
+-                host_with_port += f"":{parsed.port}""
+-
+             for host in no_proxy_hosts:
+-                if hostname.endswith(host) or host_with_port.endswith(host):
++                if ':' in host:
++                    host_name, host_port = host.split(':', 1)
++                    if host_port:
++                        try:
++                            if parsed.port != int(host_port):
++                                continue
++                        except (ValueError, TypeError):
++                            continue
++                else:
++                    host_name = host
++
++                if host_name.startswith('.'):
++                    print(f""DEBUG: hostname={hostname}, host_name={host_name}"")
++                    match = hostname.endswith(host_name)
++                else:
++                    print(f""DEBUG: hostname={hostname}, host_name={host_name}"")
++                    match = hostname == host_name or hostname.endswith('.' + host_name)
++
++                if match:
+                     # The URL does match something in no_proxy, so we don't want
+                     # to apply the proxies on this URL.
+                     return True",False,1,1985,19,483.01769432200035
+rich_4070,Textualize/rich,"diff --git a/rich/console.py b/rich/console.py
+index ad92d529..2737925b 100644
+--- a/rich/console.py
++++ b/rich/console.py
+@@ -1,15 +1,10 @@
+-import inspect
+ import os
+ import sys
+ import threading
+-import zlib
+ from abc import ABC, abstractmethod
+ from dataclasses import dataclass, field
+ from datetime import datetime
+ from functools import wraps
+-from getpass import getpass
+-from html import escape
+-from inspect import isclass
+ from itertools import islice
+ from math import ceil
+ from time import monotonic
+@@ -50,10 +45,8 @@ from .highlighter import NullHighlighter, ReprHighlighter
+ from .markup import render as render_markup
+ from .measure import Measurement, measure_renderables
+ from .pager import Pager, SystemPager
+-from .pretty import Pretty, is_expandable
+ from .protocol import rich_cast
+ from .region import Region
+-from .scope import render_scope
+ from .screen import Screen
+ from .segment import Segment
+ from .style import Style, StyleType
+@@ -63,6 +56,8 @@ from .text import Text, TextType
+ from .theme import Theme, ThemeStack
+ 
+ if TYPE_CHECKING:
++    from .pretty import Pretty, is_expandable
++    from .scope import render_scope
+     from ._windows import WindowsConsoleFeatures
+     from .live import Live
+     from .status import Status
+@@ -1321,7 +1316,7 @@ class Console:
+         render_iterable: RenderResult
+ 
+         renderable = rich_cast(renderable)
+-        if hasattr(renderable, ""__rich_console__"") and not isclass(renderable):
++        if hasattr(renderable, ""__rich_console__"") and not isinstance(renderable, type):
+             render_iterable = renderable.__rich_console__(self, _options)
+         elif isinstance(renderable, str):
+             text_renderable = self.render_str(
+@@ -1569,6 +1564,7 @@ class Console:
+                 check_text()
+                 append(renderable)
+             elif is_expandable(renderable):
++                from .pretty import Pretty, is_expandable
+                 check_text()
+                 append(Pretty(renderable, highlighter=_highlighter))
+             else:
+@@ -1901,7 +1897,7 @@ class Console:
+     @staticmethod
+     def _caller_frame_info(
+         offset: int,
+-        currentframe: Callable[[], Optional[FrameType]] = inspect.currentframe,
++        currentframe: Callable[[], Optional[FrameType]] = sys._getframe,
+     ) -> Tuple[str, int, Dict[str, Any]]:
+         """"""Get caller frame information.
+ 
+diff --git a/rich/logging.py b/rich/logging.py
+index c3e7a5f6..1e3272d4 100644
+--- a/rich/logging.py
++++ b/rich/logging.py
+@@ -1,18 +1,23 @@
++from __future__ import annotations
++
+ import logging
++import os
+ from datetime import datetime
+ from logging import Handler, LogRecord
+-from pathlib import Path
+ from types import ModuleType
+-from typing import ClassVar, Iterable, List, Optional, Type, Union
++from typing import TYPE_CHECKING, ClassVar, Iterable, List, Optional, Type, Union
++
++if TYPE_CHECKING:
++    from .console import Console, ConsoleRenderable
++    from .highlighter import Highlighter
++    from ._log_render import FormatTimeCallable
+ 
+ from rich._null_file import NullFile
+ 
+ from . import get_console
+-from ._log_render import FormatTimeCallable, LogRender
+-from .console import Console, ConsoleRenderable
+-from .highlighter import Highlighter, ReprHighlighter
++from ._log_render import LogRender
++from .highlighter import ReprHighlighter
+ from .text import Text
+-from .traceback import Traceback
+ 
+ 
+ class RichHandler(Handler):
+@@ -138,6 +143,7 @@ class RichHandler(Handler):
+             and record.exc_info
+             and record.exc_info != (None, None, None)
+         ):
++            from .traceback import Traceback
+             exc_type, exc_value, exc_traceback = record.exc_info
+             assert exc_type is not None
+             assert exc_value is not None
+@@ -221,7 +227,7 @@ class RichHandler(Handler):
+         Returns:
+             ConsoleRenderable: Renderable to display log.
+         """"""
+-        path = Path(record.pathname).name
++        path = os.path.basename(record.pathname)
+         level = self.get_level_text(record)
+         time_format = None if self.formatter is None else self.formatter.datefmt
+         log_time = datetime.fromtimestamp(record.created)",False,1,4206,28,257.76147740099987
+rich_4077,Textualize/rich,"diff --git a/rich/file_proxy.py b/rich/file_proxy.py
+index 4b0b0da6..e32523bd 100644
+--- a/rich/file_proxy.py
++++ b/rich/file_proxy.py
+@@ -55,3 +55,6 @@ class FileProxy(io.TextIOBase):
+ 
+     def fileno(self) -> int:
+         return self.__file.fileno()
++
++    def isatty(self) -> bool:
++        return self.__file.isatty()",True,0,323,18,181.60951818099966
+rich_4079,Textualize/rich,NO_PATCH,False,-1,0,28,170.1358676130003
+rich_4076,Textualize/rich,"diff --git a/rich/markdown.py b/rich/markdown.py
+index 1e28343e..3bd0dc86 100644
+--- a/rich/markdown.py
++++ b/rich/markdown.py
+@@ -490,7 +490,6 @@ class MarkdownContext:
+         """"""Called when the parser visits text.""""""
+         if node_type in {""fence"", ""code_inline""} and self._syntax is not None:
+             highlight_text = self._syntax.highlight(text)
+-            highlight_text.rstrip()
+             self.stack.top.on_text(
+                 self, Text.assemble(highlight_text, style=self.style_stack.current)
+             )",False,1,533,28,203.80567340700145
+httpx_3672,encode/httpx,"diff --git a/src/ahttpx/_parsers.py b/src/ahttpx/_parsers.py
+index 8a52a56..7573034 100644
+--- a/src/ahttpx/_parsers.py
++++ b/src/ahttpx/_parsers.py
+@@ -375,13 +375,16 @@ class HTTPParser:
+             self.recv_state = State.DONE
+         return body
+ 
+-    async def complete(self):
++    @property
++    def keep_alive(self) -> bool:
++        return self.send_keep_alive and self.recv_keep_alive
++
++    async def reset(self):
+         is_fully_complete = self.send_state == State.DONE and self.recv_state == State.DONE
+-        is_keepalive = self.send_keep_alive and self.recv_keep_alive
++        is_keepalive = self.keep_alive
+ 
+         if not (is_fully_complete and is_keepalive):
+-            await self.close()
+-            return
++            await self.close()\n            return
+ 
+         if self.mode == Mode.CLIENT:
+             self.send_state = State.SEND_METHOD_LINE
+diff --git a/src/ahttpx/_pool.py b/src/ahttpx/_pool.py
+index f712cfa..4303f98 100644
+--- a/src/ahttpx/_pool.py
++++ b/src/ahttpx/_pool.py
+@@ -237,7 +237,7 @@ class Connection(Transport):
+ 
+     # Request/response cycle complete...
+     async def _complete(self) -> None:
+-        await self._parser.complete()
++        await self._parser.reset()
+         self._idle_expiry = time.monotonic() + self._keepalive_duration
+ 
+     async def _close(self) -> None:
+diff --git a/src/httpx/_parsers.py b/src/httpx/_parsers.py
+index 830fccd..86717bf 100644
+--- a/src/httpx/_parsers.py
++++ b/src/httpx/_parsers.py
+@@ -375,9 +375,13 @@ class HTTPParser:
+             self.recv_state = State.DONE
+         return body
+ 
+-    def complete(self):
++    @property
++    def keep_alive(self) -> bool:
++        return self.send_keep_alive and self.recv_keep_alive
++
++    def reset(self):
+         is_fully_complete = self.send_state == State.DONE and self.recv_state == State.DONE
+-        is_keepalive = self.send_keep_alive and self.recv_keep_alive
++        is_keepalive = self.keep_alive
+ 
+         if not (is_fully_complete and is_keepalive):
+             self.close()
+diff --git a/src/httpx/_pool.py b/src/httpx/_pool.py
+index 7193f8d..64f4fe0 100644
+--- a/src/httpx/_pool.py
++++ b/src/httpx/_pool.py
+@@ -237,7 +237,7 @@ class Connection(Transport):
+ 
+     # Request/response cycle complete...
+     def _complete(self) -> None:
+-        self._parser.complete()
++        self._parser.reset()
+         self._idle_expiry = time.monotonic() + self._keepalive_duration
+ 
+     def _close(self) -> None:",False,2,2464,28,289.5856371410009

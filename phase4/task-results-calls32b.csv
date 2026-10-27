@@ -1,0 +1,571 @@
+id,repo,prediction,resolved,exit_code,patch_chars,tool_calls,duration_s
+fastapi_15661,fastapi/fastapi,NO_PATCH,False,-1,0,20,481.68854028199985
+fastapi_15588,fastapi/fastapi,"diff --git a/fastapi/sse.py b/fastapi/sse.py
+index 901d82496..c4549b19f 100644
+--- a/fastapi/sse.py
++++ b/fastapi/sse.py
+@@ -33,9 +33,18 @@ class EventSourceResponse(StreamingResponse):
+     media_type = ""text/event-stream""
+ 
+ 
+-def _check_id_no_null(v: str | None) -> str | None:
+-    if v is not None and ""\0"" in v:
+-        raise ValueError(""SSE 'id' must not contain null characters"")
++def _check_id_valid(v: str | None) -> str | None:
++    if v is not None:
++        if ""\0"" in v:
++            raise ValueError(""SSE 'id' must not contain null characters"")
++        if ""\n"" in v:
++            raise ValueError(""SSE 'id' must not contain newlines"")
++    return v
++
++
++def _check_event_no_newlines(v: str | None) -> str | None:
++    if v is not None and ""\n"" in v:
++        raise ValueError(""SSE 'event' must not contain newlines"")
+     return v
+ 
+ 
+@@ -86,24 +95,27 @@ class ServerSentEvent(BaseModel):
+     ] = None
+     event: Annotated[
+         str | None,
++        AfterValidator(_check_event_no_newlines),
+         Doc(
+             """"""
+             Optional event type name.
+ 
+             Maps to `addEventListener(event, ...)` on the browser. When omitted,
+             the browser dispatches on the generic `message` event.
++            **Must not contain newlines.**
+             """"""
+         ),
+     ] = None
+     id: Annotated[
+         str | None,
+-        AfterValidator(_check_id_no_null),
++        AfterValidator(_check_id_valid),
+         Doc(
+             """"""
+             Optional event ID.
+ 
+             The browser sends this value back as the `Last-Event-ID` header on
+-            automatic reconnection. **Must not contain null (`\\0`) characters.**
++            automatic reconnection. **Must not contain null (`\\0`) characters**
++            **or newlines.**
+             """"""
+         ),
+     ] = None",False,1,1833,32,368.8146914429999
+fastapi_15589,fastapi/fastapi,"diff --git a/fastapi/dependencies/utils.py b/fastapi/dependencies/utils.py
+index 7c6558c69..05ce57690 100644
+--- a/fastapi/dependencies/utils.py
++++ b/fastapi/dependencies/utils.py
+@@ -754,6 +754,7 @@ def _get_multidict_value(
+     field: ModelField, values: Mapping[str, Any], alias: str | None = None
+ ) -> Any:
+     alias = alias or get_validation_alias(field)
++    print(f""DEBUG: field={field.name}, alias={alias}, values={values}"")
+     if (
+         (not _is_json_field(field))
+         and field_annotation_is_sequence(field.field_info.annotation)
+diff --git a/repro.py b/repro.py
+new file mode 100644
+index 000000000..015a857ba
+--- /dev/null
++++ b/repro.py
+@@ -0,0 +1,29 @@
++from fastapi import FastAPI, Header
++from fastapi.testclient import TestClient
++
++app = FastAPI()
++
++@app.get(""/"")
++async def read_root(my_header: str = Header(None)):
++    return {""my_header"": my_header}
++
++client = TestClient(app)
++
++def test_underscore_header():
++    # Default convert_underscores=True
++    # Should look for 'my-header'
++    response = client.get(""/"", headers={""my_header"": ""value""})
++    print(f""Response with my_header: {response.json()}"")
++    assert response.json()[""my_header""] is None
++
++    response = client.get(""/"", headers={""my-header"": ""value""})
++    print(f""Response with my-header: {response.json()}"")
++    assert response.json()[""my_header""] == ""value""
++
++def test_underscore_header_disabled():
++    # Need to test convert_underscores=False
++    # But I need a separate app or a way to change it
++    pass
++
++if __name__ == ""__main__"":
++    test_underscore_header()
+diff --git a/repro_alias.py b/repro_alias.py
+new file mode 100644
+index 000000000..ad2dec202
+--- /dev/null
++++ b/repro_alias.py
+@@ -0,0 +1,23 @@
++from fastapi import FastAPI, Header
++from fastapi.testclient import TestClient
++
++app = FastAPI()
++
++@app.get(""/"")
++async def read_root(my_header: str = Header(None, alias=""my_header"")):
++    return {""my_header"": my_header}
++
++client = TestClient(app)
++
++def test_alias_underscore_header():
++    # convert_underscores=True by default
++    # User explicitly asked for alias=""my_header""
++    # But it might still be converted to ""my-header""
++    response = client.get(""/"", headers={""my_header"": ""value""})
++    print(f""Response with my_header: {response.json()}"")
++    
++    response = client.get(""/"", headers={""my-header"": ""value""})
++    print(f""Response with my-header: {response.json()}"")
++
++if __name__ == ""__main__"":
++    test_alias_underscore_header()
+diff --git a/repro_disabled.py b/repro_disabled.py
+new file mode 100644
+index 000000000..9b738fd78
+--- /dev/null
++++ b/repro_disabled.py
+@@ -0,0 +1,24 @@
++from fastapi import FastAPI, Header
++from fastapi.testclient import TestClient
++
++app = FastAPI()
++
++@app.get(""/"")
++async def read_root(my_header: str = Header(None, convert_underscores=False)):
++    return {""my_header"": my_header}
++
++client = TestClient(app)
++
++def test_underscore_header_disabled():
++    # convert_underscores=False
++    # Should look for 'my_header'
++    response = client.get(""/"", headers={""my_header"": ""value""})
++    print(f""Response with my_header: {response.json()}"")
++    assert response.json()[""my_header""] == ""value""
++
++    response = client.get(""/"", headers={""my-header"": ""value""})
++    print(f""Response with my-header: {response.json()}"")
++    assert response.json()[""my_header""] is None
++
++if __name__ == ""__main__"":
++    test_underscore_header_disabled()
+diff --git a/repro_pydantic.py b/repro_pydantic.py
+new file mode 100644
+index 000000000..0d1c555ae
+--- /dev/null
++++ b/repro_pydantic.py
+@@ -0,0 +1,27 @@
++from fastapi import FastAPI, Header
++from fastapi.testclient import TestClient
++from pydantic import BaseModel
++from starlette.datastructures import Headers
++
++app = FastAPI()
++
++class MyHeaders(BaseModel):
++    my_header: str
++
++@app.get(""/"")
++async def read_root(headers: MyHeaders = Header()):
++    return {""my_header"": headers.my_header}
++
++client = TestClient(app)
++
++def test_pydantic_underscore_header():
++    print(""Testing my_header..."")
++    response = client.get(""/"", headers={""my_header"": ""value1""})
++    print(f""Response with my_header: {response.json()}"")
++    
++    print(""Testing my-header..."")
++    response = client.get(""/"", headers={""my-header"": ""value2""})
++    print(f""Response with my-header: {response.json()}"")
++
++if __name__ == ""__main__"":
++    test_pydantic_underscore_header()",False,1,4383,32,484.99290895600006
+fastapi_15030,fastapi/fastapi,"diff --git a/fastapi/responses.py b/fastapi/responses.py
+index 5b1154c0..4c79d66b 100644
+--- a/fastapi/responses.py
++++ b/fastapi/responses.py
+@@ -22,6 +22,28 @@ except ImportError:  # pragma: nocover
+     orjson = None  # type: ignore
+ 
+ 
++class EventSourceResponse(StreamingResponse):
++    def __init__(
++        self,
++        content: Any,
++        status_code: int = 200,
++        headers: dict[str, str] | None = None,
++        background: Any = None,
++        media_type: str = ""text/event-stream"",
++    ) -> None:
++        if headers is None:
++            headers = {}
++        headers[""Cache-Control""] = ""no-cache""
++        headers[""Connection""] = ""keep-alive""
++        super().__init__(
++            content=content,
++            status_code=status_code,
++            headers=headers,
++            background=background,
++            media_type=media_type,
++        )
++
++
+ @deprecated(
+     ""UJSONResponse is deprecated, FastAPI now serializes data directly to JSON ""
+     ""bytes via Pydantic when a return type or response model is set, which is """,False,2,1058,32,423.1280901780001
+requests_7505,psf/requests,"diff --git a/src/requests/models.py b/src/requests/models.py
+index ebeba1e3..e798d91d 100644
+--- a/src/requests/models.py
++++ b/src/requests/models.py
+@@ -161,7 +161,7 @@ class RequestEncodingMixin:
+ 
+         if isinstance(data, (str, bytes)):
+             return data
+-        elif isinstance(data, _SupportsRead):
++        elif isinstance(data, _SupportsRead) or hasattr(data, ""read""):
+             return data
+         elif hasattr(data, ""__iter__""):
+             result: list[tuple[bytes, bytes]] = []
+@@ -641,7 +641,7 @@ class PreparedRequest(RequestEncodingMixin, RequestHooksMixin):
+             else:
+                 if raw_data:
+                     body = self._encode_params(raw_data)
+-                    if isinstance(data, basestring) or isinstance(data, _SupportsRead):
++                    if isinstance(data, basestring) or isinstance(data, _SupportsRead) or hasattr(data, ""read""):
+                         content_type = None
+                     else:
+                         content_type = ""application/x-www-form-urlencoded""
+diff --git a/src/requests/utils.py b/src/requests/utils.py
+index fff6edf4..883240f4 100644
+--- a/src/requests/utils.py
++++ b/src/requests/utils.py
+@@ -151,7 +151,7 @@ def dict_to_sequence(
+ ) -> Iterable[tuple[Any, Any]]:
+     """"""Returns an internal sequence dictionary update.""""""
+ 
+-    if isinstance(d, _SupportsItems):
++    if isinstance(d, _SupportsItems) or hasattr(d, ""items""):
+         return d.items()
+ 
+     return d
+@@ -398,7 +398,7 @@ def to_key_val_list(
+     if isinstance(value, (str, bytes, bool, int)):
+         raise ValueError(""cannot encode objects that are not 2-tuples"")
+ 
+-    if isinstance(value, _SupportsItems):
++    if isinstance(value, _SupportsItems) or hasattr(value, ""items""):
+         return list(value.items())
+ 
+     return list(value)",False,1,1817,30,371.7877191279995
+requests_7502,psf/requests,"diff --git a/src/requests/models.py b/src/requests/models.py
+index c4cc028e..b04f862e 100644
+--- a/src/requests/models.py
++++ b/src/requests/models.py
+@@ -36,7 +36,7 @@ from urllib3.filepost import encode_multipart_formdata
+ from urllib3.util import parse_url
+ 
+ from ._internal_utils import to_native_string, unicode_is_ascii
+-from ._types import SupportsRead as _SupportsRead
++
+ from .auth import HTTPBasicAuth
+ from .compat import (
+     JSONDecodeError,
+@@ -161,7 +161,7 @@ class RequestEncodingMixin:
+ 
+         if isinstance(data, (str, bytes)):
+             return data
+-        elif isinstance(data, _SupportsRead):
++        elif hasattr(data, ""read""):
+             return data
+         elif hasattr(data, ""__iter__""):
+             result: list[tuple[bytes, bytes]] = []
+@@ -236,7 +236,7 @@ class RequestEncodingMixin:
+ 
+             if isinstance(fp, (str, bytes, bytearray)):
+                 fdata = fp
+-            elif isinstance(fp, _SupportsRead):  # defensive check for untyped callers
++            elif hasattr(fp, ""read""):  # defensive check for untyped callers
+                 fdata = fp.read()
+             elif fp is None:  # defensive check for untyped callers
+                 continue
+@@ -639,7 +639,7 @@ class PreparedRequest(RequestEncodingMixin, RequestHooksMixin):
+             else:
+                 if raw_data:
+                     body = self._encode_params(raw_data)
+-                    if isinstance(data, basestring) or isinstance(data, _SupportsRead):
++                    if isinstance(data, basestring) or hasattr(data, ""read""):
+                         content_type = None
+                     else:
+                         content_type = ""application/x-www-form-urlencoded""",False,1,1716,32,327.20187625200015
+requests_7433,psf/requests,"diff --git a/src/requests/models.py b/src/requests/models.py
+index 4142f2a4..f271e7e6 100644
+--- a/src/requests/models.py
++++ b/src/requests/models.py
+@@ -596,9 +596,9 @@ class PreparedRequest(RequestEncodingMixin, RequestHooksMixin):
+             if not isinstance(body, bytes):
+                 body = body.encode(""utf-8"")
+ 
+-        if isinstance(data, Iterable) and not isinstance(
+-            data, (str, bytes, list, tuple, Mapping)
+-        ):
++        if (
++            isinstance(data, Iterable) or hasattr(data, ""__iter__"")
++        ) and not isinstance(data, (str, bytes, list, tuple, Mapping)):
+             try:
+                 length = super_len(data)
+             except (TypeError, AttributeError, UnsupportedOperation):",False,1,738,13,183.13606196699948
+requests_7427,psf/requests,"diff --git a/src/requests/utils.py b/src/requests/utils.py
+index e69ad0d7..72733f0b 100644
+--- a/src/requests/utils.py
++++ b/src/requests/utils.py
+@@ -851,11 +851,21 @@ def should_bypass_proxies(url: str, no_proxy: str | None) -> bool:
+                 host_with_port += f"":{parsed.port}""
+ 
+             for host in no_proxy_hosts:
+-                if hostname.endswith(host) or host_with_port.endswith(host):
+-                    # The URL does match something in no_proxy, so we don't want
+-                    # to apply the proxies on this URL.
++                if host.startswith('.'):
++                    host = host[1:]
++                if ':' in host:
++                    if host_with_port == host or host_with_port.endswith('.' + host):
++                        return True
++                elif hostname == host or hostname.endswith('.' + host):
+                     return True
+ 
++        if sys.platform == ""win32"":
++            try:
++                return proxy_bypass_registry(hostname)
++            except NameError:
++                pass
++        return False
++
+     with set_environ(""no_proxy"", no_proxy_arg):
+         try:
+             bypass = proxy_bypass(hostname)",False,1,1188,32,468.2894655069995
+rich_4070,Textualize/rich,NO_PATCH,False,1,0,32,163.54557026500152
+rich_4077,Textualize/rich,"diff --git a/rich/file_proxy.py b/rich/file_proxy.py
+index 4b0b0da6..35797c9a 100644
+--- a/rich/file_proxy.py
++++ b/rich/file_proxy.py
+@@ -55,3 +55,7 @@ class FileProxy(io.TextIOBase):
+ 
+     def fileno(self) -> int:
+         return self.__file.fileno()
++
++    def isatty(self) -> bool:
++        return getattr(self.__file, ""isatty"", lambda: False)()
++",True,0,352,13,140.1000805190015
+rich_4079,Textualize/rich,"diff --git a/rich/table.py b/rich/table.py
+index 1e2eb2b4..d8ec0df3 100644
+--- a/rich/table.py
++++ b/rich/table.py
+@@ -37,34 +37,7 @@ if TYPE_CHECKING:
+ 
+ @dataclass
+ class Column:
+-    """"""Defines a column within a ~Table.
+-
+-    Args:
+-        title (Union[str, Text], optional): The title of the table rendered at the top. Defaults to None.
+-        caption (Union[str, Text], optional): The table caption rendered below. Defaults to None.
+-        width (int, optional): The width in characters of the table, or ``None`` to automatically fit. Defaults to None.
+-        min_width (Optional[int], optional): The minimum width of the table, or ``None`` for no minimum. Defaults to None.
+-        box (box.Box, optional): One of the constants in box.py used to draw the edges (see :ref:`appendix_box`), or ``None`` for no box lines. Defaults to box.HEAVY_HEAD.
+-        safe_box (Optional[bool], optional): Disable box characters that don't display on windows legacy terminal with *raster* fonts. Defaults to True.
+-        padding (PaddingDimensions, optional): Padding for cells (top, right, bottom, left). Defaults to (0, 1).
+-        collapse_padding (bool, optional): Enable collapsing of padding around cells. Defaults to False.
+-        pad_edge (bool, optional): Enable padding of edge cells. Defaults to True.
+-        show_header (bool, optional): Show a header row. Defaults to True.
+-        show_footer (bool, optional): Show a footer row. Defaults to False.
+-        show_edge (bool, optional): Draw a box around the outside of the table. Defaults to True.
+-        show_lines (bool, optional): Draw lines between every row. Defaults to False.
+-        leading (int, optional): Number of blank lines between rows (precludes ``show_lines``). Defaults to 0.
+-        style (Union[str, Style], optional): Default style for the table. Defaults to ""none"".
+-        row_styles (List[Union, str], optional): Optional list of row styles, if more than one style is given then the styles will alternate. Defaults to None.
+-        header_style (Union[str, Style], optional): Style of the header. Defaults to ""table.header"".
+-        footer_style (Union[str, Style], optional): Style of the footer. Defaults to ""table.footer"".
+-        border_style (Union[str, Style], optional): Style of the border. Defaults to None.
+-        title_style (Union[str, Style], optional): Style of the title. Defaults to None.
+-        caption_style (Union[str, Style], optional): Style of the caption. Defaults to None.
+-        title_justify (str, optional): Justify method for title. Defaults to ""center"".
+-        caption_justify (str, optional): Justify method for caption. Defaults to ""center"".
+-        highlight (bool, optional): Highlight cell contents (if str). Defaults to False.
+-    """"""
++    """"""Defines a column within a ~Table.""""""
+ 
+     header: ""RenderableType"" = """"
+     """"""RenderableType: Renderable for the header (typically a string)""""""",False,1,2940,11,207.18842097800007
+rich_4076,Textualize/rich,NO_PATCH,False,1,0,32,412.32646860800014
+httpx_3672,encode/httpx,"diff --git a/src/ahttpx/_network.py b/src/ahttpx/_network.py
+index 957e036..3a7fa05 100644
+--- a/src/ahttpx/_network.py
++++ b/src/ahttpx/_network.py
+@@ -65,6 +65,7 @@ class NetworkServer:
+         self.host = host
+         self.port = port
+         self._server = server
++        self._streams = []
+ 
+     # Context managed usage...
+     async def __aenter__(self) -> ""NetworkServer"":
+@@ -77,7 +78,10 @@ class NetworkServer:
+         traceback: types.TracebackType | None = None,
+     ):
+         self._server.close()
++        for stream in self._streams:
++            await stream.close()
+         await self._server.wait_closed()
++        return exc_type is KeyboardInterrupt
+ 
+ 
+ class NetworkBackend:
+@@ -106,12 +110,23 @@ class NetworkBackend:
+         return NetworkStream(reader, writer, address=address)
+ 
+     async def serve(self, host: str, port: int, handler: typing.Callable[[NetworkStream], None]) -> NetworkServer:
++        server_instance = None
++
+         async def callback(reader, writer):
++            nonlocal server_instance
+             stream = NetworkStream(reader, writer)
+-            await handler(stream)
++            try:
++                if server_instance:
++                    server_instance._streams.append(stream)
++                await handler(stream)
++            finally:
++                await stream.close()
++                if server_instance:
++                    server_instance._streams.remove(stream)
+ 
+         server = await asyncio.start_server(callback, host, port)
+-        return NetworkServer(host, port, server)
++        server_instance = NetworkServer(host, port, server)
++        return server_instance
+ 
+ 
+ Semaphore = asyncio.Semaphore
+diff --git a/src/ahttpx/_parsers.py b/src/ahttpx/_parsers.py
+index 8a52a56..afe4f8b 100644
+--- a/src/ahttpx/_parsers.py
++++ b/src/ahttpx/_parsers.py
+@@ -375,7 +375,7 @@ class HTTPParser:
+             self.recv_state = State.DONE
+         return body
+ 
+-    async def complete(self):
++    async def reset(self):
+         is_fully_complete = self.send_state == State.DONE and self.recv_state == State.DONE
+         is_keepalive = self.send_keep_alive and self.recv_keep_alive
+ 
+@@ -404,6 +404,10 @@ class HTTPParser:
+             self.recv_state = State.CLOSED
+             await self.stream.close()
+ 
++    @property
++    def keep_alive(self) -> bool:
++        return self.send_keep_alive and self.recv_keep_alive
++
+     def is_idle(self) -> bool:
+         return (
+             self.send_state == State.SEND_METHOD_LINE or
+diff --git a/src/ahttpx/_server.py b/src/ahttpx/_server.py
+index a9103cc..5b7cb6b 100644
+--- a/src/ahttpx/_server.py
++++ b/src/ahttpx/_server.py
+@@ -89,7 +89,7 @@ class HTTPConnection:
+ 
+     # Start it all over again...
+     async def _complete(self):
+-        await self._parser.complete
++        await self._parser.reset()
+         self._idle_expiry = time.monotonic() + self._keepalive_duration
+ 
+ 
+diff --git a/src/httpx/_network.py b/src/httpx/_network.py
+index 5ea9bb5..8614610 100644
+--- a/src/httpx/_network.py
++++ b/src/httpx/_network.py
+@@ -160,7 +160,7 @@ class NetworkServer:
+         self._max_workers = 5
+         self._executor = None
+         self._thread = None
+-        self._streams = list[NetworkStream]
++        self._streams = []
+ 
+     @property
+     def host(self):
+@@ -177,7 +177,10 @@ class NetworkServer:
+ 
+     def __exit__(self, exc_type, exc_val, exc_tb):
+         self.listener.close()
++        for stream in self._streams:
++            stream.close()
+         self._executor.shutdown(wait=True)
++        return exc_type is KeyboardInterrupt
+ 
+     def _serve(self):
+         while stream := self.listener.accept():
+@@ -185,9 +188,11 @@ class NetworkServer:
+ 
+     def _handler(self, stream):
+         try:
++            self._streams.append(stream)
+             self.handler(stream)
+         finally:
+             stream.close()
++            self._streams.remove(stream)
+ 
+ 
+ class NetworkBackend:
+diff --git a/src/httpx/_parsers.py b/src/httpx/_parsers.py
+index 830fccd..ef2d8d4 100644
+--- a/src/httpx/_parsers.py
++++ b/src/httpx/_parsers.py
+@@ -375,7 +375,7 @@ class HTTPParser:
+             self.recv_state = State.DONE
+         return body
+ 
+-    def complete(self):
++    def reset(self):
+         is_fully_complete = self.send_state == State.DONE and self.recv_state == State.DONE
+         is_keepalive = self.send_keep_alive and self.recv_keep_alive
+ 
+@@ -404,6 +404,10 @@ class HTTPParser:
+             self.recv_state = State.CLOSED
+             self.stream.close()
+ 
++    @property
++    def keep_alive(self) -> bool:
++        return self.send_keep_alive and self.recv_keep_alive
++
+     def is_idle(self) -> bool:
+         return (
+             self.send_state == State.SEND_METHOD_LINE or
+diff --git a/src/httpx/_server.py b/src/httpx/_server.py
+index 95226d9..b46e4ac 100644
+--- a/src/httpx/_server.py
++++ b/src/httpx/_server.py
+@@ -89,7 +89,7 @@ class HTTPConnection:
+ 
+     # Start it all over again...
+     def _complete(self):
+-        self._parser.complete
++        self._parser.reset()
+         self._idle_expiry = time.monotonic() + self._keepalive_duration",False,2,5122,32,405.3100475989995

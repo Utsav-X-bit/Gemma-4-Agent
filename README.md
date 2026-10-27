@@ -166,6 +166,7 @@ Full risk register: `docs/05-risks-and-blockers.md`.
 | `docs/05-risks-and-blockers.md` | Full risk register with detection/mitigation/evidence |
 | `docs/06-experiments-and-tracking.md` | Metrics, splits, paired comparisons, run manifest, decision rules |
 | `docs/07-paper-and-small-model.md` | Paper-track and small-model-bonus strategy |
+| `docs/08-run-log.md` | Chronological record of actual runs, results, and deviations from this plan |
 | `docs/SOURCES.md` | Claim ledger with URLs, line references, confidence labels |
 | `docs/_research/` | Raw fact sheets from the local harness README and notebook (not the polished guide) |
 
