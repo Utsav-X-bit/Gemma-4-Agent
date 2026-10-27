@@ -28,7 +28,7 @@ echo "starting vLLM: model=$MODEL_DIR adapter=$ADAPTER_DIR port=$PORT log=$LOG"
 nohup "$VLLM_PY" -m vllm.entrypoints.openai.api_server \
   --model "$MODEL_DIR" \
   --served-model-name "$SERVED_NAME" \
-  --host 127.0.0.1 \
+  --host 0.0.0.0 \
   --port "$PORT" \
   --tensor-parallel-size 1 \
   --max-model-len 32768 \

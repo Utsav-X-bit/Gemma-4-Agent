@@ -59,6 +59,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--data-dir", type=Path, default=Path.home() / "gemma4" / "data")
     p.add_argument("--results-dir", type=Path, default=Path.home() / "gemma4" / "remote-results")
     p.add_argument("--port", type=int, default=8000)
+    p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--per-repo", type=int, default=4)
     p.add_argument("--limit", type=int, default=0)
     p.add_argument("--task-id", action="append", default=[], help="only run these instance ids")
@@ -110,7 +111,7 @@ def main() -> None:
     vllm_cfg = VllmConfig(
         model=str(Path.home() / "gemma4" / "models" / "gemma-4-31B-it-qat-w4a16-ct"),
         port=args.port,
-        host="127.0.0.1",
+        host=args.host,
         tool_call_parser="gemma4",
         reasoning_parser="gemma4",
         max_model_len=32768,
