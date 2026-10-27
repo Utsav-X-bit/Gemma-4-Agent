@@ -18,3 +18,6 @@ submission-probe.zip
 
 # OS
 .DS_Store
+
+# Large LoRA adapter (remote only)
+phase5/submission-gold/adapters/
