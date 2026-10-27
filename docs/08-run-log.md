@@ -282,7 +282,16 @@ The explorer was invoked correctly (`explorer_agent` at 9.2 s), but it consumed 
 
 Next: serve the adapter on the W4A16 base, prove it changes outputs, then run the 13-task holdout A/B. Do not submit unless it wins.
 
-### 6.11 Calls32 second seed — unstable
+### 6.11 Gold adapter served — A/B running
+
+- Full SFT completed: 30 steps, 2 epochs, train loss 0.713, 23m22s, 234 MB adapter.
+- Adapter keys: 820 text-only keys, `lora_B` non-zero (max 0.025).
+- vLLM `Gemma4ForConditionalGeneration` rejects LoRA. Workaround: patch the staged W4A16 `config.json` to `architectures: ["Gemma4ForCausalLM"]`; vLLM then loads the text-only model with LoRA and maps adapter keys.
+- Server: `scn6-10g:8000`, TP=1, 32k max len, 13,552 KV tokens (1×A100).
+- `gold-holdout` is running on the 13 holdout tasks.
+- Activation check at temperature 0 with logprobs was **inconclusive**: base and `gold` produced identical top-5 logprobs for one prompt. The 13-task A/B is the deciding test.
+
+### 6.12 Calls32 second seed — unstable
 
 | Run | Resolved | Patches | p50 | p95 | NO_PATCH |
 |---|---:|---:|---:|---:|---|
