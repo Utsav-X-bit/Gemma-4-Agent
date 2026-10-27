@@ -26,15 +26,9 @@ from transformers import (
 )
 from trl import SFTConfig, SFTTrainer
 
-TARGET_MODULES = [
-    "q_proj",
-    "k_proj",
-    "v_proj",
-    "o_proj",
-    "gate_proj",
-    "up_proj",
-    "down_proj",
-]
+# Gemma 4 wraps each projection in Gemma4ClippableLinear(linear=Linear4bit).
+# PEFT cannot target the wrapper, so target the inner `linear` modules.
+TARGET_MODULES = ["linear"]
 
 
 def parse_args() -> argparse.Namespace:
