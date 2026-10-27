@@ -181,6 +181,25 @@ Plan:
 - Hold out entire tasks/repos for evaluation; never train on the holdout.
 - If the first adapter does not beat the base, improve data quality/thinking consistency before scaling to 10k examples.
 
+### 4.6.1 Public-task split policy (129 tasks)
+
+Use all 129 public tasks in the data pipeline, but never train and evaluate on the same task.
+
+| Stage | Train | Holdout | Purpose |
+|---|---:|---:|---|
+| First adapter smoke | **116** | **13** (current screen) | Fast signal; direct comparison to the probe baseline |
+| Confirmation | **103** | **26** (6–7 per repo) | Less noisy A/B before committing |
+| Final adapter | **129** | 0 | Best data; evidence comes from the hidden score and the earlier held-out result |
+
+Rules:
+
+- Split by `instance_id`, not by patch hunk or file. A task is entirely in train or entirely in holdout.
+- The 13 holdout tasks are exactly the current local screen, so the existing probe/0.24 results remain comparable.
+- `patch` is the training target. `test_patch` is never in the training context or target; it is only for local verification.
+- For gold-patch SFT, start with one example per task (issue + relevant base-commit files → full gold patch). Per-file/per-hunk expansion is allowed only after the task-level split is fixed.
+- After retraining on all 129, the local holdout is no longer a clean estimate. Do not report the old holdout score for the final adapter; use the hidden submission.
+- If the 116/13 adapter wins, run the 103/26 confirmation before spending a submission slot.
+
 ### 4.7 Leakage and publication rules
 
 - Public tasks include `patch` and `test_patch` (S2). Do not train on the hidden tests; do not put `test_patch` in the model context. Use it only for local verification.

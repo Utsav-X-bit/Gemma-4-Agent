@@ -92,6 +92,14 @@ python remote_eval.py --agent-dir ~/Gemma-4-Agent/submission-probe --tag remote-
 - Canonical remote scripts are `phase5/remote_eval.py` and `phase5/remote_vllm_gemma4.sh`. The copies at `~/Gemma-4-Agent/remote_eval.py` and `remote_vllm_gemma4.sh` are legacy scp copies; remove them after the current baseline finishes.
 - `.kaggle/kaggle.json` was removed from the index; if it was ever pushed, rotate the Kaggle token. The local file stays on disk for CLI use.
 
+## Training split
+
+- Use all 129 public tasks as the data pool, but never train and evaluate on the same task.
+- First adapter: **116 train / 13 holdout** (the current local screen).
+- Confirmation: **103 train / 26 holdout**.
+- Final adapter: **129 train**; the old holdout is invalid after retraining, so use the hidden score.
+- Split by `instance_id`; `patch` is the target, `test_patch` is verification only.
+
 ## Competition state
 
 - **Phase 0 hidden score: 0.18** (probe bundle: 31B, 8 min, 28 calls, 4096 thinking, 8192 output).

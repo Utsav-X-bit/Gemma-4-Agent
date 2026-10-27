@@ -262,6 +262,11 @@ The explorer was invoked correctly (`explorer_agent` at 9.2 s), but it consumed 
 
 - Downloading the trainable checkpoint `google/gemma-4-31B-it-qat-q4_0-unquantized` on the login node to `~/gemma4/models/gemma-4-31B-qat-unquantized`.
 - First experiment: gold-patch SFT (rank-16 QLoRA, text backbone, response-only loss) on the 129 public tasks.
+- Split policy (adopted 2026-10-28):
+  - First adapter: **116 train / 13 holdout** (the current screen).
+  - Confirmation: **103 train / 26 holdout**.
+  - Final adapter: **129 train**, evidence from the hidden score; the old holdout is no longer valid after retraining.
+  - Split by `instance_id`; `test_patch` is never a training target.
 - If the adapter is active and wins a paired 13-task A/B, test trajectory SFT next.
 - Do not submit an adapter until it beats the prompt-only baseline and passes the vLLM W4A16 activation check.
 
