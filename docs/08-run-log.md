@@ -11,6 +11,7 @@ Last updated: **2026-10-27**.
 | Item | Status |
 |---|---|
 | Phase 0 — hidden submission probe | **Scored 0.18** (ref **57642443**) |
+| Phase 5 — exact public 0.24 prompt | Submitted **57709729**, **PENDING** |
 | Phase 1 — harness smoke test | Passed on Kaggle L4x4; one non-empty patch |
 | Phase 2a — gold-patch calibration | **13/13** selected public tasks resolved |
 | Phase 2b — budget comparison | Complete; **8 min / 28 calls** is best of three |
@@ -32,6 +33,15 @@ Current best configuration: **31B, 8 min, 28 calls, 240 s command timeout, 8192 
 - Purpose: validate that Kaggle accepts and scores the bundle. It does not test the agent quality.
 
 Artifact: `submission-probe.zip`.
+
+### 2.1 Exact public 0.24 prompt submission
+
+- Bundle: `phase5/submission-024`, prompt SHA-256 `37dbbed1a80113851abae5166b48b9205e6929c05d46682d06c64ad607190345`.
+- Source: `honghanhhh/gemma-4-baseline-lb-0-24` (public notebook; author-reported 0.24).
+- Submitted 2026-10-27 18:06 UTC, ref **57709729**.
+- Status: **PENDING**.
+- The daily submission quota is now exhausted; the next slot is tomorrow.
+- Purpose: test whether the four missing prompt rules close the 0.18 → 0.24 gap.
 
 ---
 
