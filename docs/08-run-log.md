@@ -270,6 +270,18 @@ The explorer was invoked correctly (`explorer_agent` at 9.2 s), but it consumed 
 - If the adapter is active and wins a paired 13-task A/B, test trajectory SFT next.
 - Do not submit an adapter until it beats the prompt-only baseline and passes the vLLM W4A16 activation check.
 
+### 6.10 Gold-patch SFT smoke — passed
+
+- Trainable base: `google/gemma-4-31B-it-qat-q4_0-unquantized` (59 GB), downloaded.
+- Data: 128 examples (129 tasks minus `fastapi_15661`), 116 train / 13 holdout.
+- 12k-char context version: p50 2,306 tokens; 108/128 ≤4,096 tokens.
+- PEFT target: text `q/k/v/o/gate/up/down` only; vision/audio excluded. Trainable 122.4M (0.39%); adapter 234 MB.
+- 2k smoke: 10 steps, loss 0.91→0.19, `grad_norm` non-zero, `lora_B` non-zero. Passed.
+- 4k smoke: one step, 20k tokens, 51 s; fits on 1×A100 40 GB. 8k OOMs.
+- Full 116-task, 2-epoch run started: `~/gemma4/adapters/gold-sft-r16`.
+
+Next: serve the adapter on the W4A16 base, prove it changes outputs, then run the 13-task holdout A/B. Do not submit unless it wins.
+
 ### 6.11 Calls32 second seed — unstable
 
 | Run | Resolved | Patches | p50 | p95 | NO_PATCH |

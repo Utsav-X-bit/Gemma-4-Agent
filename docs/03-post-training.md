@@ -542,6 +542,33 @@ Notes:
 - `train_on_responses_only` can mask instruction tokens, but for multi-turn tool calls with custom labels, prefer pre-tokenized `input_ids`/`labels` (S25).
 - Unsloth multi-GPU is via Accelerate/DDP/DeepSpeed and is less mature (S10); for 4×A100, Axolotl FSDP2 is more predictable.
 
+### 7.3.1 Gemma 4 PEFT targeting (verified on the remote A100)
+
+Gemma 4 wraps vision/audio projections in `Gemma4ClippableLinear(linear=...)`; PEFT cannot target the wrapper. The text backbone uses plain `nn.Linear` for `q_proj`, `k_proj`, `v_proj`, `o_proj`, `gate_proj`, `up_proj`, `down_proj`.
+
+Use a broad target plus an exclusion, not a `language_model`-only regex:
+
+```python
+LoraConfig(
+    r=16,
+    lora_alpha=16,
+    lora_dropout=0.0,
+    bias="none",
+    task_type="CAUSAL_LM",
+    target_modules=r".*\.(q_proj|k_proj|v_proj|o_proj|gate_proj|up_proj|down_proj)$",
+    exclude_modules=r".*(vision_tower|audio_tower|vision_model|audio_model).*",
+)
+```
+
+Verified behavior on `google/gemma-4-31B-it-qat-q4_0-unquantized`:
+
+- Trainable parameters: **122,429,440** (0.39%); adapter ~234 MB at rank 16.
+- Text-only targets: 820 keys, all under `language_model`; no vision/audio keys.
+- `target_modules=["linear"]` alone trains only vision/audio and produces zero text gradients — do not use it.
+- `max_length=8192` OOMs on 1×A100 40 GB during backward; `4096` fits (one step ~51 s, ~20k tokens).
+- Use `max_length=4096`, `per_device_train_batch_size=1`, `gradient_accumulation_steps=8`, `gradient_checkpointing=True`, `optim="paged_adamw_8bit"`, `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`.
+- Check `grad_norm > 0` and `lora_B` non-zero after the smoke. Zero `grad_norm` with a non-zero loss means the LoRA targets are not in the forward path.
+
 ### 7.4 12B / E4B
 
 Do **not** copy the 31B recipe verbatim. Substitute at least these fields:
