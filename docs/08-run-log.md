@@ -2,7 +2,7 @@
 
 This is the chronological record of what we actually did, what changed, and why. It is not a polished guide; it is the audit trail for future reference. The main plan is `README.md`; deviations are recorded here.
 
-Last updated: **2026-10-26**.
+Last updated: **2026-10-27**.
 
 ---
 
@@ -10,12 +10,12 @@ Last updated: **2026-10-26**.
 
 | Item | Status |
 |---|---|
-| Phase 0 — hidden submission probe | Submitted, ref **57642443**, **PENDING** at last check |
+| Phase 0 — hidden submission probe | **Scored 0.18** (ref **57642443**) |
 | Phase 1 — harness smoke test | Passed on Kaggle L4x4; one non-empty patch |
 | Phase 2a — gold-patch calibration | **13/13** selected public tasks resolved |
 | Phase 2b — budget comparison | Complete; **8 min / 28 calls** is best of three |
 | Phase 3 — prompt v2 | Run; **2/13**, no improvement over probe |
-| Remote 4×A100 harness | Abandoned; remote will be used for training only |
+| Remote 4×A100 harness | **Operational**; vLLM 0.19.1 + harness venv; smoke tasks pass |
 | Docker | Not used; no sudo on remote; Kaggle uses subprocess sandbox |
 
 Current best configuration: **31B, 8 min, 28 calls, 240 s command timeout, 8192 output, 4096 thinking, subprocess sandbox**. It is not yet final because the projected 120-task time is ~10.8 h, too close to the 12 h limit.
@@ -28,7 +28,7 @@ Current best configuration: **31B, 8 min, 28 calls, 240 s command timeout, 8192 
 - Config: 31B, 8 min, 28 calls, 240 s, 8192 output, 4096 thinking.
 - Submitted on 2026-10-25 20:46:54 UTC.
 - Ref: **57642443**.
-- Last checked: **PENDING**.
+- **Scored 0.18 public/private** after the queue cleared on 2026-10-27.
 - Purpose: validate that Kaggle accepts and scores the bundle. It does not test the agent quality.
 
 Artifact: `submission-probe.zip`.
@@ -51,7 +51,22 @@ Artifact: `submission-probe.zip`.
 
 **Decision:** stop the remote harness install. The wheelhouse is designed for the Kaggle image; chasing its dependency graph on a bare HPC venv is not worth the time. Use Kaggle for harness/evaluation, remote for training.
 
-### 3.2 Kaggle smoke test
+### 3.2 Kaggle GPU quota exhausted — remote becomes primary
+
+- Kaggle GPU quota is exhausted as of 2026-10-27. All further inference/evaluation must run on the remote 4×A100.
+- Remote harness is now operational:
+  - login `isea31` → Slurm partition `airawatp`; persistent 7-day tmux session `gemma4` on `scn19-mn` (4×A100-SXM4-40GB).
+  - `~/Gemma-4-Agent/.venv`: `swegemma`, `adk_submission`, `adk_eval_core`, `google-adk`, `litellm==1.105.0`.
+  - `~/gemma4/vllm-venv`: `vllm 0.19.1`, `torch 2.10.0+cu128`, `transformers 5.13.1`, `tokenizers 0.22.2`; flashinfer removed.
+  - Model: `google/gemma-4-31B-it-qat-w4a16-ct`, 23 GB safetensors, staged to `/dev/shm/gemma4-model`.
+  - Workarounds: `allow_global_per_layer_attribute_access: true` in staged `config.json`; `--disable-custom-all-reduce`; `--gpu-memory-utilization 0.40` because another user's process occupies GPUs 0–2; `--gpu-memory-utilization` 0.90/0.45 OOMs.
+  - vLLM startup ~4 min (torch.compile + CUDA graphs); generation ~72 tok/s; KV cache 25,056 tokens.
+- Remote parity smoke:
+  - `rich_4077`: **resolved**, exact 395-char patch, 25 calls, 122.6 s (Kaggle: resolved, 395 chars, 18 calls, 149.9 s).
+  - `fastapi_15661`: no patch, 28 calls, 398.2 s (matches Kaggle's known no-patch).
+- Full 13-task remote baseline `remote-probe13` is running.
+
+### 3.3 Kaggle smoke test
 
 - Official Getting Started notebook, L4x4, internet off.
 - vLLM started; 2 tasks ran; sample submission 1 min/10 calls returned `NO_PATCH` on both. That is expected from the sample budget, not a harness failure.
