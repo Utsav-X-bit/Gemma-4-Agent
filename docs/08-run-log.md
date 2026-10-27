@@ -190,7 +190,20 @@ It is a **clean +1** over probe: it keeps `fastapi_15589` and `rich_4077` and ad
 
 **Decision:** provisional candidate. Keep probe as the known-good fallback. Run a second seed on the same 13 tasks before promoting. If the second run reproduces the +1, test 7 min / 32 calls to create global-time margin.
 
-### 6.5 Calls32 second seed — unstable
+### 6.5 Public 0.24 prompt recovered
+
+The public 0.24 notebook (`honghanhhh/gemma-4-baseline-lb-0-24`) was downloaded. Its bundle is the 0.22 bundle with four prompt changes:
+
+- hard limits 28 calls / 8 minutes (same as probe);
+- test-file ban also covers `pytest.ini` and `conftest.py`;
+- scratch files must go in `/tmp`, never `/workspace`;
+- final check is `git status --short && git diff`, and untracked scratch/test files must be removed before `submit_patch`.
+
+Our probe prompt lacked those four changes. The exact bundle is now in `phase5/submission-024` (prompt SHA-256 `37dbbed1...`). Test it on the same 13 remote tasks after `remote-probe13` finishes.
+
+**Decision:** exact 0.24 is the prompt-only baseline to match. A remote A/B must show ≥2 tasks gained with no losses before adoption.
+
+### 6.6 Calls32 second seed — unstable
 
 | Run | Resolved | Patches | p50 | p95 | NO_PATCH |
 |---|---:|---:|---:|---:|---|
