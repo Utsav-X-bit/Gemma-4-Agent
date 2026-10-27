@@ -5,7 +5,7 @@ from openai import OpenAI
 
 BASE = os.environ.get("VLLM_BASE", "http://scn6-10g:8000/v1")
 client = OpenAI(base_url=BASE, api_key="EMPTY")
-prompt = "Write a Python function `add_all(xs)` that returns the sum of a list. Return only code."
+prompt = "Fix this bug: FileProxy inherits io.TextIOBase, whose isatty() returns False, so FileProxy.isatty() is not proxied. Return only the unified diff."
 
 
 def gen(model: str) -> str:
@@ -13,8 +13,13 @@ def gen(model: str) -> str:
         model=model,
         messages=[{"role": "user", "content": prompt}],
         temperature=0.0,
-        max_tokens=128,
+        max_tokens=1,
+        logprobs=True,
+        top_logprobs=5,
     )
+    lp = r.choices[0].logprobs
+    if lp and lp.content:
+        return [(t.token, round(t.logprob, 6)) for t in lp.content[0].top_logprobs]
     return r.choices[0].message.content or ""
 
 
