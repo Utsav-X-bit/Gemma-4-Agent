@@ -37,6 +37,8 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
     p.add_argument("--model", type=Path, default=Path.home() / "gemma4" / "models" / "gemma-4-31B-qat-unquantized")
     p.add_argument("--data", type=Path, default=Path.home() / "gemma4" / "sft" / "gold_sft.jsonl")
+    p.add_argument("--train-ids", type=Path, default=Path.home() / "gemma4" / "sft" / "train_ids.json")
+    p.add_argument("--all-data", action="store_true", help="train on every example (final retrain)")
     p.add_argument("--output-dir", type=Path, default=Path.home() / "gemma4" / "adapters" / "gold-sft-r16")
     p.add_argument("--max-steps", type=int, default=-1)
     p.add_argument("--epochs", type=float, default=2.0)
@@ -81,6 +83,11 @@ def main() -> None:
         tokenizer.pad_token = tokenizer.eos_token
 
     ds = load_dataset("json", data_files=str(args.data), split="train")
+    if not args.all_data:
+        train_ids = set(json.loads(args.train_ids.read_text()))
+        before = len(ds)
+        ds = ds.filter(lambda row: row["task_id"] in train_ids)
+        print(f"filtered dataset {before} -> {len(ds)} using {args.train_ids}")
     print(f"dataset rows={len(ds)} columns={ds.column_names}")
 
     model = load_model(args.model)
