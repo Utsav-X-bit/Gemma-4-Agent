@@ -213,7 +213,18 @@ Our probe prompt lacked those four changes. The exact bundle is now in `phase5/s
 
 **Decision:** exact 0.24 is the prompt-only baseline to match. A remote A/B must show ≥2 tasks gained with no losses before adoption.
 
-### 6.6 Calls32 second seed — unstable
+### 6.6 Remote 13-task baseline (A100)
+
+| Arm | Resolved | Patches | Mean | p95 |
+|---|---:|---:|---:|---:|
+| Kaggle L4 probe 28 | 2/13 | 12/13 | 324.6 s | 474.6 s |
+| Remote A100 probe 28 | **3/13** | 11/13 | **162.8 s** | 227.5 s |
+
+Remote gained `requests_7427`; no Kaggle-resolved task was lost. `rich_4079` and `rich_4076` produced no patch on remote. The A100 is ~2× faster than L4, so remote timing is **not** a valid global-time projection; use it for correctness/ranking only.
+
+The exact 0.24 prompt is now running as `remote-024` on the same 13 tasks.
+
+### 6.7 Calls32 second seed — unstable
 
 | Run | Resolved | Patches | p50 | p95 | NO_PATCH |
 |---|---:|---:|---:|---:|---|
