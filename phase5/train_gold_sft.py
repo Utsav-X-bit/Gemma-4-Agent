@@ -26,9 +26,12 @@ from transformers import (
 )
 from trl import SFTConfig, SFTTrainer
 
-# Gemma 4 wraps each projection in Gemma4ClippableLinear(linear=Linear4bit).
-# PEFT cannot target the wrapper, so target the inner `linear` modules.
-TARGET_MODULES = ["linear"]
+# Gemma 4 text attention/MLP uses plain nn.Linear; the vision tower wraps
+# projections in Gemma4ClippableLinear, which PEFT cannot target. Train the
+# text backbone only; no vision/audio LoRA.
+TARGET_MODULES = [
+    r".*language_model.*\.(q_proj|k_proj|v_proj|o_proj|gate_proj|up_proj|down_proj)$"
+]
 
 
 def parse_args() -> argparse.Namespace:
