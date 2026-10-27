@@ -29,9 +29,8 @@ from trl import SFTConfig, SFTTrainer
 # Gemma 4 text attention/MLP uses plain nn.Linear; the vision tower wraps
 # projections in Gemma4ClippableLinear, which PEFT cannot target. Train the
 # text backbone only; no vision/audio LoRA.
-TARGET_MODULES = [
-    r".*language_model.*\.(q_proj|k_proj|v_proj|o_proj|gate_proj|up_proj|down_proj)$"
-]
+TARGET_MODULES = r".*\.(q_proj|k_proj|v_proj|o_proj|gate_proj|up_proj|down_proj)$"
+EXCLUDE_MODULES = r".*(vision_tower|audio_tower|vision_model|audio_model).*"
 
 
 def parse_args() -> argparse.Namespace:
@@ -96,6 +95,7 @@ def main() -> None:
         bias="none",
         task_type="CAUSAL_LM",
         target_modules=TARGET_MODULES,
+        exclude_modules=EXCLUDE_MODULES,
     )
     model = get_peft_model(model, peft)
     model.print_trainable_parameters()
