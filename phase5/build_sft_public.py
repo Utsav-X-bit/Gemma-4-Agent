@@ -15,6 +15,10 @@ def parse_args():
     p.add_argument("--out", type=Path, default=Path.home() / "gemma4" / "sft" / "public_sft.jsonl")
     p.add_argument("--tiers", default="native,external_A")
     p.add_argument("--max-context", type=int, default=8192)
+    p.add_argument("--native-only", action="store_true")
+    p.add_argument("--exclude-write-file", action="store_true")
+    p.add_argument("--max-completion-chars", type=int, default=0)
+    p.add_argument("--exclude-file-creation", action="store_true")
     return p.parse_args()
 
 
@@ -27,6 +31,15 @@ def main():
     a.out.parent.mkdir(parents=True, exist_ok=True)
     with a.out.open("w", encoding="utf-8") as f:
         for step in iter_steps(a.root, tiers=tiers, max_context_tokens=a.max_context):
+            completion = step["completion"]
+            if a.native_only and step["tier"] != "native":
+                continue
+            if a.exclude_write_file and "write_file" in completion:
+                continue
+            if a.max_completion_chars and len(completion) > a.max_completion_chars:
+                continue
+            if a.exclude_file_creation and ("python3 - <<" in completion or "python - <<" in completion or "cat >" in completion or "echo >" in completion):
+                continue
             row = {
                 "task_id": f"{step['tier']}:{step['trajectory_id']}",
                 "repo": step["issue"],
