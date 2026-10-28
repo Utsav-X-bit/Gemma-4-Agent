@@ -392,6 +392,13 @@ rank 16
 4×A100
 ```
 
+Bundle manifest prepared:
+
+```text
+phase5/submission-native-clean/agent.yaml
+adapter: native-clean
+```
+
 Filters applied:
 
 - native tier only,
