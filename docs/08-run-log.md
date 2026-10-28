@@ -338,8 +338,9 @@ Training:
 - QLoRA rank 16, alpha 16, text backbone only.
 - `max_length=8192`, `per_device_train_batch_size=1`, `gradient_accumulation_steps=8`.
 - One optimizer step on 4 GPUs: ~214 s, loss 2.52, `grad_norm` 25.12.
-- Full run started: 2 epochs on 1,051 steps → `~/gemma4/adapters/public-sft-r16`.
-- Expected duration: ~4 hours.
+- Full run completed: 66 optimizer steps, 2 epochs, train loss **0.3482**, 3h18m, adapter 234 MB.
+- Adapter saved to `~/gemma4/adapters/public-sft-r16`.
+- Served on the text-only W4A16 path as `public-sft`; 13-task holdout A/B `public-sft-holdout` is running.
 
 This is the highest-signal training data found so far because it teaches the actual agent behavior (thoughts + tool calls + edits) rather than only the final diff.
 
