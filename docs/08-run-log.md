@@ -473,7 +473,44 @@ New rules:
 
 `policy-v3-holdout` is running on the same 1×A100 server.
 
-### 7.5 Compaction-safe policy v4
+### 7.5 Policy v3 holdout — mixed, not promotable
+
+`policy-v3-holdout` finished on the same 1×A100 server.
+
+| Arm | Resolved | Patches | Mean | p95 | Hit 28 calls | Hit 8 min |
+|---|---:|---:|---:|---:|---:|---:|
+| paired base | 2/13 | 11/13 | 243.2 s | 363.1 s | 7/13 | 0/13 |
+| **policy v3** | **3/13** | **9/13** | 265.8 s | **490.2 s** | 8/13 | **2/13** |
+| public SFT | 3/13 | 11/13 | 290.6 s | 439.5 s | 5/13 | 1/13 |
+
+Resolved: `fastapi_15589`, `requests_7427`, `rich_4077`.
+
+What improved:
+
+- `rich_4077` was regained.
+- No scratch/test file appeared in any patch.
+- “Previous agent” mentions dropped to one, and the model qualified it as “or me, in this session’s context” before resolving.
+
+What regressed:
+
+- Patch count dropped from **11 to 9**.
+- Two tasks hit the 8-minute cap: `fastapi_15661` and `fastapi_15030`.
+- Tool-call failure rate rose from **11.6% to 19.6%**.
+- Malformed tool arguments rose to **21** (14 `write_file`, 7 `edit_file`).
+- The agent ran **zero targeted tests**; paired base ran three.
+- First-edit time worsened slightly (17.4 calls vs 15.4).
+- Prompt tokens rose from 3.21M to 3.54M.
+
+Critical failure on `requests_7427`:
+
+- The task resolved with **`NO_PATCH`**.
+- The agent burned all 28 calls debugging a `python3 -c` check that imported an installed `requests` copy, not `/workspace/src/requests`.
+- Workspace code would return `True` for `mygoogle.com`.endswith(`google.com`), but the imported function returned `False`, proving the check used the wrong package.
+- This is a prompt-policy gap: Python one-liners need `PYTHONPATH=src` or the repository’s own test runner.
+
+Conclusion: policy v3 is **not a clean improvement**. It fixes compaction attribution and scratch-file hygiene, but worsens tool reliability, verification, and time budget. Do not combine it with the adapter unchanged.
+
+### 7.6 Compaction-safe policy v4
 
 `policy-v3` was extended into:
 
