@@ -60,7 +60,7 @@ def load_model(model_path: Path):
     )
     common = dict(
         quantization_config=bnb,
-        device_map={"": 0},
+        device_map={"": int(os.environ.get("LOCAL_RANK", 0))},
         trust_remote_code=True,
         torch_dtype=torch.bfloat16,
     )
@@ -123,8 +123,9 @@ def main() -> None:
         bf16=True,
         gradient_checkpointing=True,
         gradient_checkpointing_kwargs={"use_reentrant": False},
-        optim="paged_adamw_8bit",
+        optim="adamw_torch",
         dataloader_num_workers=0,
+        ddp_find_unused_parameters=False,
         completion_only_loss=True,
         packing=False,
         report_to="none",

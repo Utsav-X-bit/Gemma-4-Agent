@@ -304,6 +304,45 @@ The adapter is slower and does not improve resolved count. This matches the publ
 
 **Decision:** do not submit the gold adapter. Keep the prompt-only bundle. A useful adapter needs trajectory/thinking data, not gold-patch SFT alone.
 
+### 7. Public trajectory SFT pivot (2026-10-28)
+
+The public `dmitriigluzdov/gemma-4-serving-and-lora-verification-kit` dataset was found on Kaggle.
+
+- 1,670 resolved agent trajectories; 56,702 prompt/target training steps.
+- Native tier: 103 Gemma 4 31B Budget-Fit trajectories on 55 tasks.
+- External A: 14 public trajectories within 28 calls.
+- External B/B2: 1,553 Qwen3-Coder-480B trajectories, converted to the nine-tool format.
+- Native unresolved: 56 failures for preference-pair analysis.
+- License: CC BY 4.0 for data, Apache 2.0 for Qwen3 teacher text.
+
+Downloaded to `~/gemma4/data/lora`:
+
+```text
+lora_native_resolved.jsonl  (198 MiB)
+lora_external_A.jsonl       (18 MiB)
+lora_data.py                (loader)
+lora_index.csv              (per-trajectory index)
+```
+
+Built `~/gemma4/sft/public_sft.jsonl`:
+
+- Tiers: native + external_A.
+- Context cap: 8,192 tokens.
+- Steps: 1,051.
+- Format: prompt/completion, already in the competition chat template.
+
+Training:
+
+- Model: `/dev/shm/gemma4-31B-qat-unquantized` (staged on the compute node).
+- 4×A100 40 GB DDP.
+- QLoRA rank 16, alpha 16, text backbone only.
+- `max_length=8192`, `per_device_train_batch_size=1`, `gradient_accumulation_steps=8`.
+- One optimizer step on 4 GPUs: ~214 s, loss 2.52, `grad_norm` 25.12.
+- Full run started: 2 epochs on 1,051 steps → `~/gemma4/adapters/public-sft-r16`.
+- Expected duration: ~4 hours.
+
+This is the highest-signal training data found so far because it teaches the actual agent behavior (thoughts + tool calls + edits) rather than only the final diff.
+
 ### 6.13 Calls32 second seed — unstable
 
 | Run | Resolved | Patches | p50 | p95 | NO_PATCH |
