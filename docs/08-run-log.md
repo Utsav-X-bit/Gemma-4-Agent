@@ -344,6 +344,64 @@ Training:
 
 This is the highest-signal training data found so far because it teaches the actual agent behavior (thoughts + tool calls + edits) rather than only the final diff.
 
+### 7.1 Public SFT holdout — no gain, diagnosed
+
+| Arm | Resolved | Patches | First edit mean |
+|---|---:|---:|---:|
+| base | 3/13 | 11/13 | 18.1 calls |
+| public SFT alpha 16 | **3/13** | 11/13 | **14.8 calls** |
+
+Same resolved set (`fastapi_15589`, `requests_7427`, `rich_4077`). The adapter edits earlier but does not improve resolution.
+
+Tool-call failure analysis:
+
+| Category | Base | Public SFT |
+|---|---:|---:|
+| Total tool calls | 355 | 326 |
+| Bad calls | 51 (14.4%) | 53 (16.3%) |
+| `run_command` errors | 26 | **36** |
+| `edit_file` errors | 24 | 12 |
+| Malformed arguments | 12 | 8 |
+| `write_file` malformed | 0 | **7** |
+| Search no-match | 12 | 14 |
+| Runtime/assert failures | 3 | **12** |
+
+Key failure modes introduced by the adapter:
+
+1. **Scratch-file bias.** The native training data contains 62 `write_file` steps; 53–54 are scratch/test scripts (e.g. `test_fix.py`). The adapter reproduced this by writing `repro.py` into `/workspace` on `requests_7427`.
+2. **Malformed `write_file` calls.** On `requests_7505` it repeated the same malformed call seven times because `filepath` was missing.
+3. **Premature self-verification.** On `fastapi_15588`, `fastapi_15030`, and `requests_7505` it built its own tests, saw them pass, then submitted; hidden tests still failed.
+4. **Token-limit loops.** `rich_4076` repeated the same truncated `grep -n "def wrap"` tool call three times and produced no patch.
+5. **No multi-file gain.** `fastapi_15030`, `rich_4070`, and `httpx_3672` still edit only 1–3 files where gold requires 7–9.
+
+Data-quality diagnosis:
+
+- Native-only steps at 8k: 887.
+- Native `write_file` steps: 62; scratch-like: 53–54.
+- External A steps at 8k: 164.
+- Completion length p95: 3,091 chars.
+
+**Next experiment:** train on **native-only, scratch-filtered, length-filtered** trajectories:
+
+```text
+~/gemma4/sft/native_clean_sft.jsonl
+778 examples
+alpha 8
+rank 16
+2 epochs
+4×A100
+```
+
+Filters applied:
+
+- native tier only,
+- no `write_file` completions,
+- no heredoc/redirect file creation,
+- completion ≤ 3,000 chars,
+- context ≤ 8,192 tokens.
+
+This targets the observed failure modes instead of adding more mixed-teacher data.
+
 ### 6.13 Calls32 second seed — unstable
 
 | Run | Resolved | Patches | p50 | p95 | NO_PATCH |
