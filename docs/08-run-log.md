@@ -409,6 +409,70 @@ Filters applied:
 
 This targets the observed failure modes instead of adding more mixed-teacher data.
 
+### 7.2 Paired base on 1×A100 and budget evidence
+
+A base-model 13-task holdout was run on the same single-A100 server used for the public SFT A/B, removing the earlier 4-GPU hardware mismatch.
+
+| Arm | Resolved | Patches | Mean | p95 |
+|---|---:|---:|---:|---:|
+| base, 4×A100 | 3/13 | 11/13 | 162.8 s | 227.5 s |
+| **base, 1×A100 paired** | **2/13** | 11/13 | 243.2 s | 363.1 s |
+| public SFT, 1×A100 | 3/13 | 11/13 | 290.6 s | 439.5 s |
+
+Paired base lost `rich_4077`; it kept `fastapi_15589` and `requests_7427`. The one-task public-SFT gain over paired base is inside the noise band.
+
+**Tool budget is the binding constraint, not time:**
+
+| Arm | Hit 28 calls | Hit 8 min | Max duration |
+|---|---:|---:|---:|
+| paired base | **7/13** | 0/13 | 381.5 s |
+| public SFT | 5/13 | 1/13 | 480.6 s |
+| 4-GPU base | 8/13 | 0/13 | 236.5 s |
+
+On paired base, every task finished below 6.4 minutes, but 7 tasks exhausted all 28 calls. Increasing calls alone is not supported: calls40 was worse and calls32 was unstable. The lever is more efficient call use, not a larger cap.
+
+### 7.3 “Previous agent” hallucination — cause and proof
+
+On `httpx_3672`, the base agent said:
+
+```text
+I hope the previous agent ... actually did the work.
+This means the previous agent's changes are being submitted.
+```
+
+There is no previous agent in the bundle: `submission/agent.yaml` declares one `LlmAgent` and no sub-agents.
+
+The cause is **event compaction**. The harness uses `EventsCompactionConfig` with a 14,336-token threshold. Token counts in the trace show two compactions:
+
+| Step | Prompt tokens | Interpretation |
+|---:|---:|---|
+| 11 | 14,734 | above the 14,336 threshold |
+| 12 | 9,402 | context compacted |
+| 23 | 15,285 | above the threshold again |
+| 24 | 5,494 | context compacted again |
+
+After the second compaction, the model saw a summary of its own earlier work, phrased by the ADK summarizer as a conversation between “a user and an AI agent.” It then misattributed that summary to a previous agent. The same pattern appeared in the 4-GPU base run on `rich_4070` (“Maybe it was already edited by a previous agent?”).
+
+This is a prompt-policy failure, not a real multi-agent system.
+
+### 7.4 Policy v3 experiment
+
+A prompt-only bundle was added:
+
+```text
+phase5/submission-policy-v3
+```
+
+New rules:
+
+1. You are the only agent; any earlier summary is your own prior work.
+2. Verify the actual working tree with `git diff --stat` before assuming work is complete.
+3. For renames/behavior changes, enumerate every call site with one `git grep`.
+4. Never create test, repro, or scratch files under `/workspace`.
+5. On the budget warning, stop exploration, fix remaining source call sites, then submit.
+
+`policy-v3-holdout` is running on the same 1×A100 server.
+
 ### 6.13 Calls32 second seed — unstable
 
 | Run | Resolved | Patches | p50 | p95 | NO_PATCH |
