@@ -473,6 +473,30 @@ New rules:
 
 `policy-v3-holdout` is running on the same 1×A100 server.
 
+### 7.5 Compaction-safe policy v4
+
+`policy-v3` was extended into:
+
+```text
+phase5/submission-policy-v4
+```
+
+Additions:
+
+1. Explicit `CONTEXT SUMMARY RULES`: a summary is the same agent’s prior work, never another agent.
+2. After a summary, the next call must be `git diff --stat` or `git status --short`.
+3. `KEEP CONTEXT SMALL`: 80-line reads, 40-line shell output, 25-line test tails, no whole-file reads.
+
+A combined adapter bundle was also prepared:
+
+```text
+phase5/submission-native-policy-v4
+adapter: native-clean
+prompt:  policy-v4
+```
+
+Once `native-clean-sft-r16-a8` finishes, evaluate this combined bundle on the same 13 holdout tasks on the same 1×A100 server.
+
 ### 6.13 Calls32 second seed — unstable
 
 | Run | Resolved | Patches | p50 | p95 | NO_PATCH |
