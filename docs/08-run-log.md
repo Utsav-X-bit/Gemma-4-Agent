@@ -291,7 +291,20 @@ Next: serve the adapter on the W4A16 base, prove it changes outputs, then run th
 - `gold-holdout` is running on the 13 holdout tasks.
 - Activation check at temperature 0 with logprobs was **inconclusive**: base and `gold` produced identical top-5 logprobs for one prompt. The 13-task A/B is the deciding test.
 
-### 6.12 Calls32 second seed — unstable
+### 6.12 Gold adapter A/B — active but a wash
+
+| Arm | Resolved | Patches | Mean | p95 |
+|---|---:|---:|---:|---:|
+| base probe 28 | **3/13** | 11/13 | 162.8 s | 227.5 s |
+| gold adapter, alpha 16 | **3/13** | 12/13 | 297.7 s | 435.1 s |
+
+Same resolved set (`fastapi_15589`, `requests_7427`, `rich_4077`). The gold patches are materially different from the base patches on every task, so the adapter **is applied**; the one-prompt identical-logprob check was a false negative caused by an easy first token.
+
+The adapter is slower and does not improve resolved count. This matches the public LoRA evidence: alpha 16 causes longer thinking/time; alpha 8 is safer but an aggregate wash.
+
+**Decision:** do not submit the gold adapter. Keep the prompt-only bundle. A useful adapter needs trajectory/thinking data, not gold-patch SFT alone.
+
+### 6.13 Calls32 second seed — unstable
 
 | Run | Resolved | Patches | p50 | p95 | NO_PATCH |
 |---|---:|---:|---:|---:|---|

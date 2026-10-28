@@ -568,6 +568,8 @@ Verified behavior on `google/gemma-4-31B-it-qat-q4_0-unquantized`:
 - `max_length=8192` OOMs on 1×A100 40 GB during backward; `4096` fits (one step ~51 s, ~20k tokens).
 - Use `max_length=4096`, `per_device_train_batch_size=1`, `gradient_accumulation_steps=8`, `gradient_checkpointing=True`, `optim="paged_adamw_8bit"`, `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`.
 - Check `grad_norm > 0` and `lora_B` non-zero after the smoke. Zero `grad_norm` with a non-zero loss means the LoRA targets are not in the forward path.
+- Gold-patch SFT alone was a wash: 3/13 base vs 3/13 adapter, same resolved set, adapter slower (297.7 s vs 162.8 s mean). The adapter was active (patches differed); data/task mismatch was the problem.
+- A useful adapter needs successful agent trajectories with thinking traces matching inference, not just gold diffs.
 - vLLM 0.19.1 rejects LoRA on `Gemma4ForConditionalGeneration`. Patch the staged W4A16 `config.json` to `architectures: ["Gemma4ForCausalLM"]`; the text-only class supports LoRA and maps `model.language_model.*` adapter keys onto `model.*`.
 - On 1×A100 40 GB, 32k max len leaves only ~13.5k KV tokens. Use 2–4 GPUs for long agent contexts.
 
