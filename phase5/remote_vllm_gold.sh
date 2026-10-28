@@ -4,6 +4,7 @@ set -euo pipefail
 
 MODEL_DIR="${MODEL_DIR:-/dev/shm/gemma4-w4a16}"
 ADAPTER_DIR="${ADAPTER_DIR:-$HOME/Gemma-4-Agent/phase5/submission-gold/adapters/gold}"
+ADAPTER_NAME="${ADAPTER_NAME:-gold}"
 LOG="${LOG:-$HOME/gemma4/vllm-gold.log}"
 PORT="${PORT:-8000}"
 SERVED_NAME="${SERVED_NAME:-gemma-4-31b-it-qat-w4a16-ct}"
@@ -43,7 +44,7 @@ nohup "$VLLM_PY" -m vllm.entrypoints.openai.api_server \
   --enable-lora \
   --max-loras 1 \
   --max-lora-rank 16 \
-  --lora-modules "gold=$ADAPTER_DIR" \
+  --lora-modules "$ADAPTER_NAME=$ADAPTER_DIR" \
   --trust-remote-code \
   > "$LOG" 2>&1 &
 echo "PID=$!"
