@@ -463,6 +463,8 @@ results/run_01/
 
 **Local evaluation caveat:** the starter notebook uses `sandbox='subprocess'`, 2 tasks, and sample budgets (S6:351,362). Plain-notebook gold patches fail on many public tasks due to missing test dependencies and wheel shadowing; a calibrated sandbox gets 127/129 (S31, S32). Do not use a plain notebook as your only local evaluator.
 
+**Verified local Docker evaluator (2026-10-29):** `swebench-sandbox:latest` + `.venv-local` + `phase5/local_eval.py` / `phase5/local_verify.py`. Gold audit is 8/13; the five clean tasks are `fastapi_15588`, `fastapi_15589`, `requests_7427`, `rich_4077`, `rich_4076`. Only trust runs with `patch_chars > 0`; the harness can report `resolved=True` with an empty patch. See `docs/09-adapter-and-local-eval.md`.
+
 ---
 
 ## 11. Known harness quirks and ambiguities

@@ -5,6 +5,7 @@ set -euo pipefail
 MODEL_DIR="${MODEL_DIR:-/dev/shm/gemma4-w4a16}"
 ADAPTER_DIR="${ADAPTER_DIR:-$HOME/Gemma-4-Agent/phase5/submission-gold/adapters/gold}"
 ADAPTER_NAME="${ADAPTER_NAME:-gold}"
+MAX_LORA_RANK="${MAX_LORA_RANK:-16}"
 LOG="${LOG:-$HOME/gemma4/vllm-gold.log}"
 PORT="${PORT:-8000}"
 SERVED_NAME="${SERVED_NAME:-gemma-4-31b-it-qat-w4a16-ct}"
@@ -43,7 +44,7 @@ nohup "$VLLM_PY" -m vllm.entrypoints.openai.api_server \
   --disable-custom-all-reduce \
   --enable-lora \
   --max-loras 1 \
-  --max-lora-rank 16 \
+  --max-lora-rank "$MAX_LORA_RANK" \
   --lora-modules "$ADAPTER_NAME=$ADAPTER_DIR" \
   --trust-remote-code \
   > "$LOG" 2>&1 &

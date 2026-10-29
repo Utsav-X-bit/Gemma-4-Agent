@@ -68,34 +68,44 @@ srun --job-name=gemma4-shell --partition=airawatp --nodelist=scn19-10g \
 - Do not run GPU commands in the login shell; run them inside `gemma4`.
 - If the session dies, recreate it with the same `srun` command; `--cpus-per-task=4` is what scheduled immediately (32 CPUs stayed pending).
 
-### Verified remote state (2026-10-27)
+### Verified remote state (2026-10-29)
 
-- Login node: internet works; HF token present (`Utsav-X-Bit`), Kaggle credentials present.
-- Compute nodes: A100-SXM4-40GB, driver `550.90.07`; `srun` works.
-- The HF repo `google/gemma-4-31B-it-qat-w4a16-ct` is accessible; model downloaded to `~/gemma4/models/gemma-4-31B-it-qat-w4a16-ct` (23 GB `model.safetensors`).
-- `~/Gemma-4-Agent/.venv` is the project venv (uv, Python 3.12). It has `swegemma`, `adk_submission`, `adk_eval_core`, `google-adk`, `litellm==1.105.0`, and the harness deps. Use it for the agent/harness.
-  - `litellm` must stay at **1.105.0**: 1.106.4 imports `mcp.types.CacheableResult`, which mcp 1.30.0 does not provide, breaking every model call.
-  - Register the served alias as `aliases={declared_model: declared_model}`; the default mapping sends the model filesystem path, which vLLM 404s.
-- `~/gemma4/vllm-venv` is the separate serving venv: `vllm 0.19.1`, `torch 2.10.0+cu128`, `transformers 5.13.1` (pinned to the wheelhouse), `tokenizers 0.22.2`. Torch CUDA works on the A100s with driver 550.90.07.
-- `flashinfer-python`/`flashinfer-cubin` were removed: their `nvidia_cutlass_dsl` import aborts under this stack. vLLM falls back to NCCL.
-- `~/gemma4/harness-venv` is incomplete (no torch/vllm); do not use it.
-- The staged model at `/dev/shm/gemma4-model` has `allow_global_per_layer_attribute_access: true` added to `config.json`; without it, transformers 5.13 raises `AmbiguousGlobalPerLayerAttributeError` on Gemma 4 heterogeneous `head_dim`. Reapply after any restage.
-- Another user (`isea52`, PID `2242364`, ollama/llama-server) is using GPUs 0–2 on `scn19-10g`; do not kill it. vLLM therefore runs with `--gpu-memory-utilization 0.40`, not 0.90.
-- vLLM startup takes ~4 min (torch.compile + CUDA graph capture); generation is ~72 tok/s; KV cache is 25,056 tokens. The server listens on `127.0.0.1:8000`.
-- Remote parity smoke passed: `rich_4077` resolved with the exact 395-char patch (25 calls, 122.6 s); `fastapi_15661` no-patch (28 calls, 398.2 s).
-- Kaggle GPU quota is exhausted; remote is now the primary inference/evaluation/training target.
+- Login node: internet works; Kaggle CLI and credentials present. Compute nodes have no internet.
+- `scn6-mn` has 4×A100-SXM4-40GB; tmux `train4` holds 4 idle GPUs for training/serving.
+- Exact scorer model: `~/gemma4/models/gemma-4-31B-it-qat-w4a16-ct` (22 GB), staged at `/dev/shm/gemma4-w4a16`.
+- Scorer vLLM wheel: `~/gemma4/wheelhouse/vllm-0.19.1-cp38-abi3-manylinux_2_31_x86_64.whl`, sha256 `73c69bafca24fbdad44690c44d6c6446514351e6f3cc9a6057cba05e66051310`. It is byte-identical to the Kaggle wheelhouse dataset.
+- `~/gemma4/vllm-venv`: vLLM 0.19.1, torch 2.10.0+cu128, transformers 5.13.1. The custom patch resolves the W4A16 model as `Gemma4ForCausalLM`.
+- Adapter format (verified): train separate `q/k/v/o/gate/up/down` projections, then run `phase5/remap_adapter_prefix.py` to rewrite `model.language_model.layers.*` -> `model.self_decoder.decoder_layers.*`. Serve with `--max-lora-rank 16`. Do **not** fuse qkv/gate_up; vLLM rejects fused target names.
+- Active adapter: `~/gemma4/adapters/native-clean-prefixed` (234 MB). Activation is proven by logprobs, not by load logs: base `-1.788e-06` vs adapter `-2.861e-06` for the first token.
+- Harness venv: `~/Gemma-4-Agent/.venv` (Python 3.12) with `swegemma`, `adk_submission`, `adk_eval_core`, `google-adk`, `litellm==1.105.0`.
+  - `litellm` must stay at **1.105.0**; 1.106.4 breaks model calls via `mcp.types.CacheableResult`.
+  - Register the served alias as `aliases={declared_model: declared_model}`.
+- Local Docker evaluator: `.venv-local` (Python 3.13), image `swebench-sandbox:latest`, local `data/` with 13 snapshots. Gold audit: 8/13; the five clean tasks are `fastapi_15588`, `fastapi_15589`, `requests_7427`, `rich_4077`, `rich_4076`.
+- vLLM startup ~3–4 min; adapter KV cache ~15k tokens at 32k max len. Servers currently run on ports 8007/8008 on `scn6-mn`.
+- Kaggle GPU quota is exhausted; remote is the primary inference/evaluation/training target.
 
 ### Remote serving/eval commands
 
 ```bash
-# inside tmux session gemma4
-bash ~/Gemma-4-Agent/remote_vllm_gemma4.sh
-tail -f ~/gemma4/vllm-gemma4.log
-
-# harness venv (separate shell)
+# prefixed adapter server (inside tmux train4, GPU 0)
 cd ~/Gemma-4-Agent
+CUDA_VISIBLE_DEVICES=0 MAX_LORA_RANK=16 ADAPTER_NAME=native-clean-prefixed \
+  ADAPTER_DIR=$HOME/gemma4/adapters/native-clean-prefixed PORT=8007 \
+  LOG=$HOME/gemma4/vllm-prefixed-8007.log bash phase5/remote_vllm_gold.sh
+
+# local tunnel
+ssh -N -L 8007:scn6-mn:8007 isea31
+
+# local Docker evaluator (host)
+.venv-local/bin/python phase5/local_eval.py \
+  --agent-dir phase5/submission-v4-32-prefixed --tag v4-32-prefixed \
+  --task-id fastapi_15588 --task-id fastapi_15589 --task-id requests_7427 \
+  --task-id rich_4077 --task-id rich_4076 \
+  --per-repo 4 --host 127.0.0.1 --port 8007
+
+# remote subprocess evaluator (smoke only; 8/13 gold tasks are invalid)
 source .venv/bin/activate
-python remote_eval.py --agent-dir ~/Gemma-4-Agent/submission-probe --tag remote-probe --limit 2
+python phase5/remote_eval.py --agent-dir phase5/submission-v4-32-prefixed --tag smoke --limit 1
 ```
 
 `remote_eval.py` registers the already-running vLLM endpoint; it does not start vLLM. Do not run `VllmServer.start()` in the harness venv (it has no torch/vLLM).
@@ -110,7 +120,7 @@ python remote_eval.py --agent-dir ~/Gemma-4-Agent/submission-probe --tag remote-
   2. On the **login node** (internet), `cd ~/Gemma-4-Agent && git pull --ff-only`.
   3. Compute nodes read the same shared files; never run `git pull` on a compute node.
 - Do **not** commit `.kaggle/`, `.venv/`, `__pycache__/`, model weights, `/dev/shm` staging, logs, or `remote-results/`.
-- Canonical remote scripts are `phase5/remote_eval.py` and `phase5/remote_vllm_gemma4.sh`. The copies at `~/Gemma-4-Agent/remote_eval.py` and `remote_vllm_gemma4.sh` are legacy scp copies; remove them after the current baseline finishes.
+- Canonical remote scripts are `phase5/remote_eval.py` and `phase5/remote_vllm_gold.sh`; the local Docker evaluator is `phase5/local_eval.py` + `phase5/local_verify.py`. Legacy copies at `~/Gemma-4-Agent/remote_eval.py` and `remote_vllm_gemma4.sh` are stale; do not use them.
 - `.kaggle/kaggle.json` was removed from the index; if it was ever pushed, rotate the Kaggle token. The local file stays on disk for CLI use.
 
 ## Training split
@@ -120,16 +130,22 @@ python remote_eval.py --agent-dir ~/Gemma-4-Agent/submission-probe --tag remote-
 - Confirmation: **103 train / 26 holdout**.
 - Final adapter: **129 train**; the old holdout is invalid after retraining, so use the hidden score.
 - Split by `instance_id`; `patch` is the target, `test_patch` is verification only.
+- Current active adapter: `~/gemma4/adapters/native-clean-prefixed`, trained on `~/gemma4/sft/native_clean_sft.jsonl` (778 rows, rank 16, alpha 8), then remapped with `phase5/remap_adapter_prefix.py`.
+- Gold-patch SFT (`gold_sft.jsonl`) is not the current adapter and is a known wash; use successful agent trajectories for future training.
 
-## Competition state
+## Competition state (2026-10-29)
 
-- **Phase 0 hidden score: 0.18** (probe bundle: 31B, 8 min, 28 calls, 4096 thinking, 8192 output).
-- Local 13-task screen: probe 28 calls = 2/13 resolved, 12/13 non-empty patches; calls32 = 3/13 then 1/13 (unstable); calls40 = 1/13; prompt v2 = 2/13.
-- Known-good config: **8 min / 28 calls / 4096 thinking / 8192 output / 240 s command timeout**.
-- Prompt is the public 0.22 prompt plus one parallel-implementations line; prompt tuning is effectively exhausted.
-- The 120-task projection at 8/28 is ~10.8 h, close to the 12 h global cap.
-- Keep `submission-probe.zip` as the scored fallback.
-- Do not claim a local improvement is real from a 13-task screen; require 20–30 tasks or paired seeds.
+- Latest public notebook score: **0.17** (not our adapter; no adapter submission has been scored yet).
+- Current best local bundle: `phase5/submission-v4-32-prefixed` — 5/5 reported, **4/5 certain** on the five clean Docker tasks; all five have non-empty patches.
+- Adapter: `native-clean-prefixed`, rank 16, alpha 8, 234 MB; activation confirmed by logprob A/B.
+- Keep the original tool list (`get_status` + graph tools). Removing them regressed `requests_7427` (4/5 reported, 3/5 real).
+- `v6-32-prefixed`: 4/5 reported but two `patch_chars=0` false positives; `requests_7427` fails.
+- `v7-32-finisher-prefixed`: 5/5 reported but two `patch_chars=0` false positives.
+- Config: **32 calls / 8 min / 4096 thinking / 8192 output / 240 s command timeout**; projected ~10.7 h for 120 tasks.
+- Do not raise to 48 calls; the global cap is 12 h.
+- The old 13-task subprocess screen is invalid for 8/13 (gold fails); use the five clean Docker tasks.
+- Keep `submission-probe.zip` only as a historical fallback; the current candidate is the prefixed adapter bundle.
+- Do not claim a local improvement is real from a single 5-task screen; the hidden score is the only final signal.
 
 ## Remote workflow
 

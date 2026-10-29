@@ -568,6 +568,38 @@ Artifacts: `phase3/task-results-v2.csv`, `phase3/task-results-all.csv`.
 
 ---
 
+## 6.1 2026-10-29 — adapter activation and Docker evaluator
+
+**Adapter root cause.** The scorer vLLM wheel is byte-identical to the Kaggle wheelhouse wheel (sha256 `73c69baf...`). The W4A16 model resolves to `Gemma4ForCausalLM`, whose modules are `model.self_decoder.decoder_layers.*` with fused `qkv_proj` / `gate_up_proj`. The adapter was trained with `model.language_model.layers.*` and separate q/k/v/gate/up keys, so vLLM found no matching weights and silently skipped every module.
+
+**Fix.** `phase5/remap_adapter_prefix.py` rewrites `model.language_model.layers.*` -> `model.self_decoder.decoder_layers.*` and keeps separate q/k/v and gate/up keys. vLLM's `packed_modules_mapping` handles the fused modules. Serve with `--max-lora-rank 16`. Do not fuse qkv/gate_up; vLLM rejects fused target names.
+
+**Activation proof.** Base vs `native-clean-prefixed` at temperature 0:
+
+```text
+base       first-token logprob -1.7881377516459906e-06
+prefixed   first-token logprob -2.861018856492592e-06
+```
+
+The top-2 alternatives also differ. “Loaded new LoRA adapter” alone is not proof.
+
+**Local Docker evaluator.** Built `swebench-sandbox:latest`, `.venv-local`, local `data/` with 13 snapshots. Gold audit is **8/13**; the five clean tasks are `fastapi_15588`, `fastapi_15589`, `requests_7427`, `rich_4077`, `rich_4076`.
+
+**Five-task comparison with the active adapter:**
+
+| Bundle | Reported | Real (patch > 0) | Notes |
+|---|---:|---:|---|
+| `submission-v4-32-prefixed` | 5/5 | **4/5 certain** | all five have patches; `fastapi_15588` message test inconsistent |
+| `submission-v4-32-prefixed-clean` | 4/5 | 3/5 | removing `get_status`/graph tools regressed `requests_7427` |
+| `submission-v6-32-prefixed` | 4/5 | 2/5 | two `patch_chars=0` false positives; `requests_7427` fails |
+| `submission-v7-32-finisher-prefixed` | 5/5 | 3/5 | two `patch_chars=0` false positives |
+
+**Decision:** `submission-v4-32-prefixed` is the ready bundle. Do not promote v6 or v7. The Docker harness can report `resolved=True` with `patch_chars=0`; only trust non-empty patches. No new adapter training is needed for this bundle; the current adapter is active after prefix remap.
+
+Artifacts: `phase5/submission-v4-32-prefixed`, `phase5/remap_adapter_prefix.py`, `phase5/local_eval.py`, `phase5/local_verify.py`, `local-results/task-results-v4-32-prefixed.csv`.
+
+---
+
 ## 7. Deviations from the main runbook
 
 | Main runbook | Actual | Reason |

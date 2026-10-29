@@ -570,7 +570,9 @@ Verified behavior on `google/gemma-4-31B-it-qat-q4_0-unquantized`:
 - Check `grad_norm > 0` and `lora_B` non-zero after the smoke. Zero `grad_norm` with a non-zero loss means the LoRA targets are not in the forward path.
 - Gold-patch SFT alone was a wash: 3/13 base vs 3/13 adapter, same resolved set, adapter slower (297.7 s vs 162.8 s mean). The adapter was active (patches differed); data/task mismatch was the problem.
 - A useful adapter needs successful agent trajectories with thinking traces matching inference, not just gold diffs.
-- vLLM 0.19.1 rejects LoRA on `Gemma4ForConditionalGeneration`. Patch the staged W4A16 `config.json` to `architectures: ["Gemma4ForCausalLM"]`; the text-only class supports LoRA and maps `model.language_model.*` adapter keys onto `model.*`.
+- vLLM 0.19.1 rejects LoRA on `Gemma4ForConditionalGeneration`. Patch the staged W4A16 `config.json` to `architectures: ["Gemma4ForCausalLM"]`.
+- **Verified 2026-10-29:** the scorer wheel (sha256 `73c69baf...`) exposes the text-only model as `model.self_decoder.decoder_layers.*` with fused `qkv_proj` / `gate_up_proj`. Keep separate q/k/v and gate/up adapter keys, but remap the prefix with `phase5/remap_adapter_prefix.py` (`model.language_model.layers.*` -> `model.self_decoder.decoder_layers.*`). Serve with `--max-lora-rank 16`. Do **not** fuse qkv/gate_up; vLLM rejects fused target names. See `docs/09-adapter-and-local-eval.md`.
+- An adapter that loads but leaves logprobs byte-identical is inactive; do not trust “Loaded new LoRA adapter”. The earlier gold-SFT “adapter active” claim only holds for the correctly remapped format.
 - On 1×A100 40 GB, 32k max len leaves only ~13.5k KV tokens. Use 2–4 GPUs for long agent contexts.
 
 ### 7.4 12B / E4B

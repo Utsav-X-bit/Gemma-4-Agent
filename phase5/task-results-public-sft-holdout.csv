@@ -1,0 +1,492 @@
+id,repo,prediction,resolved,exit_code,patch_chars,tool_calls,duration_s
+fastapi_15661,fastapi/fastapi,"diff --git a/scripts/release.py b/scripts/release.py
+new file mode 100644
+index 000000000..176dd0092
+--- /dev/null
++++ b/scripts/release.py
+@@ -0,0 +1,46 @@
++import re
++import subprocess
++import sys
++import argparse
++from pathlib import Path
++
++def release(version: str):
++    """"""
++    Prepare a new release.
++    """"""
++    # 1. Update version in fastapi/__init__.py
++    content = VERSION_FILE.read_text(encoding=""utf-8"")
++    new_content = re.sub(r'^__version__ = "".*""$', f'__version__ = ""{version}""', content, flags=re.MULTILINE)
++    if content == new_content:
++        print(f""Version {version} already set in {VERSION_FILE}"")
++    else:
++        VERSION_FILE.write_text(new_content, encoding=""utf-8"")
++        print(f""Updated version to {version} in {VERSION_FILE}"")
++
++    # 2. Update release notes
++    content = RELEASE_NOTES_FILE.read_text(encoding=""utf-8"")
++    if f""## {version}"" in content:
++        print(f""Version {version} already present in release notes"")
++    else:
++        # We want to insert '## <version>\n\n' after '## Latest Changes\n\n'
++        pattern = r""(## Latest Changes\n+)""
++        replacement = rf""\1## {version}\n\n""
++        new_content = re.sub(pattern, replacement, content, count=1)
++        if content == new_content:
++            print(f""'## Latest Changes' not found in {RELEASE_NOTES_FILE}"")
++        else:
++            RELEASE_NOTES_FILE.write_text(new_content, encoding=""utf-8"")
++            print(f""Added version {version} to {RELEASE_NOTES_FILE}"")
++
++    # 3. Run add_latest_release_date.py
++    print(""Adding release date..."")
++    subprocess.run([sys.executable, ""scripts/add_latest_release_date.py""], check=True)
++
++RELEASE_NOTES_FILE = Path(""docs/en/docs/release-notes.md"")
++VERSION_FILE = Path(""fastapi/__init__.py"")
++
++if __name__ == ""__main__"":
++    parser = argparse.ArgumentParser(description=""Prepare a new release."")
++    parser.add_argument(""version"", help=""The new version string (e.g. 0.136.4)"")
++    args = parser.parse_args()
++    release(args.version)",False,2,2016,27,412.1127096489072
+fastapi_15588,fastapi/fastapi,"diff --git a/fastapi/sse.py b/fastapi/sse.py
+index 901d82496..fabb56611 100644
+--- a/fastapi/sse.py
++++ b/fastapi/sse.py
+@@ -39,6 +39,18 @@ def _check_id_no_null(v: str | None) -> str | None:
+     return v
+ 
+ 
++def _check_id_no_newlines(v: str | None) -> str | None:
++    if v is not None and (""\n"" in v or ""\r"" in v):
++        raise ValueError(""SSE 'id' must not contain newlines"")
++    return v
++
++
++def _check_event_no_newlines(v: str | None) -> str | None:
++    if v is not None and (""\n"" in v or ""\r"" in v):
++        raise ValueError(""SSE 'event' must not contain newlines"")
++    return v
++
++
+ class ServerSentEvent(BaseModel):
+     """"""Represents a single Server-Sent Event.
+ 
+@@ -86,6 +98,7 @@ class ServerSentEvent(BaseModel):
+     ] = None
+     event: Annotated[
+         str | None,
++        AfterValidator(_check_event_no_newlines),
+         Doc(
+             """"""
+             Optional event type name.
+@@ -98,6 +111,7 @@ class ServerSentEvent(BaseModel):
+     id: Annotated[
+         str | None,
+         AfterValidator(_check_id_no_null),
++        AfterValidator(_check_id_no_newlines),
+         Doc(
+             """"""
+             Optional event ID.",False,1,1161,13,191.59127722401172
+fastapi_15589,fastapi/fastapi,"diff --git a/fastapi/dependencies/utils.py b/fastapi/dependencies/utils.py
+index 7c6558c69..ccaa43d6d 100644
+--- a/fastapi/dependencies/utils.py
++++ b/fastapi/dependencies/utils.py
+@@ -830,6 +830,8 @@ def request_params_to_args(
+     for key in received_params.keys():
+         if key not in processed_keys:
+             if isinstance(received_params, (ImmutableMultiDict, Headers)):
++                if default_convert_underscores and ""_"" in key:
++                    continue
+                 value = received_params.getlist(key)
+                 if isinstance(value, list) and (len(value) == 1):
+                     params_to_process[key] = value[0]",True,0,653,28,338.2726985141635
+fastapi_15030,fastapi/fastapi,"diff --git a/fastapi/responses.py b/fastapi/responses.py
+index 5b1154c0..ca18ffdd 100644
+--- a/fastapi/responses.py
++++ b/fastapi/responses.py
+@@ -1,4 +1,4 @@
+-from typing import Any
++from typing import Any, AsyncGenerator, Generator
+ 
+ from fastapi.exceptions import FastAPIDeprecationWarning
+ from starlette.responses import FileResponse as FileResponse  # noqa
+@@ -10,6 +10,38 @@ from starlette.responses import Response as Response  # noqa
+ from starlette.responses import StreamingResponse as StreamingResponse  # noqa
+ from typing_extensions import deprecated
+ 
++
++class SSEResponse(StreamingResponse):
++    """"""
++    SSE response for Server-Sent Events.
++    """"""
++
++    def __init__(
++        self,
++        content: Any,
++        status_code: int = 200,
++        headers: dict[str, str] | None = None,
++        background: Any = None,
++    ):
++        async def wrap_content():
++            if hasattr(content, ""__aiter__""):
++                async for item in content:
++                    yield f""data: {item}\n\n""
++            else:
++                for item in content:
++                    yield f""data: {item}\n\n""
++
++        super().__init__(
++            content=wrap_content(),
++            status_code=status_code,
++            headers=headers,
++            background=background,
++            media_type=""text/event-stream"",
++        )
++        self.headers[""Cache-Control""] = ""no-cache""
++        self.headers[""Connection""] = ""keep-alive""
++
++
+ try:
+     import ujson
+ except ImportError:  # pragma: nocover",False,2,1523,14,317.9019675841555
+requests_7505,psf/requests,"diff --git a/src/requests/_types.py b/src/requests/_types.py
+index b2273d61..ee7a19f3 100644
+--- a/src/requests/_types.py
++++ b/src/requests/_types.py
+@@ -24,13 +24,26 @@ _KT_co = TypeVar(""_KT_co"", covariant=True)
+ _VT_co = TypeVar(""_VT_co"", covariant=True)
+ 
+ 
++ProtocolMeta = type(Protocol)
++
++
++class HasAttrMeta(ProtocolMeta):
++    def __instancecheck__(cls, instance):
++        attr = getattr(cls, ""__hasattr_check__"", None)
++        if attr:
++            return super().__instancecheck__(instance) or hasattr(instance, attr)
++        return super().__instancecheck__(instance)
++
++
+ @runtime_checkable
+-class SupportsRead(Protocol[_T_co]):
++class SupportsRead(Protocol[_T_co], metaclass=HasAttrMeta):
++    __hasattr_check__ = ""read""
+     def read(self, length: int = ..., /) -> _T_co: ...
+ 
+ 
+ @runtime_checkable
+-class SupportsItems(Protocol[_KT_co, _VT_co]):
++class SupportsItems(Protocol[_KT_co, _VT_co], metaclass=HasAttrMeta):
++    __hasattr_check__ = ""items""
+     def items(self) -> Iterable[tuple[_KT_co, _VT_co]]: ...
+ 
+ 
+diff --git a/src/requests/models.py b/src/requests/models.py
+index ebeba1e3..c6d3418a 100644
+--- a/src/requests/models.py
++++ b/src/requests/models.py
+@@ -238,7 +238,7 @@ class RequestEncodingMixin:
+                 fdata = fp
+             # data that proxies attributes to underlying objects needs hasattr
+             # defensive check for untyped callers
+-            elif isinstance(fp, _SupportsRead) or hasattr(fp, ""read""):
++            elif isinstance(fp, _SupportsRead):
+                 fdata = fp.read()
+             elif fp is None:  # defensive check for untyped callers
+                 continue",False,1,1643,28,396.6054919557646
+requests_7502,psf/requests,"diff --git a/src/requests/models.py b/src/requests/models.py
+index c4cc028e..b7f8f2ec 100644
+--- a/src/requests/models.py
++++ b/src/requests/models.py
+@@ -161,7 +161,7 @@ class RequestEncodingMixin:
+ 
+         if isinstance(data, (str, bytes)):
+             return data
+-        elif isinstance(data, _SupportsRead):
++        elif hasattr(data, ""read""):
+             return data
+         elif hasattr(data, ""__iter__""):
+             result: list[tuple[bytes, bytes]] = []
+@@ -236,7 +236,7 @@ class RequestEncodingMixin:
+ 
+             if isinstance(fp, (str, bytes, bytearray)):
+                 fdata = fp
+-            elif isinstance(fp, _SupportsRead):  # defensive check for untyped callers
++            elif hasattr(fp, ""read""):  # defensive check for untyped callers
+                 fdata = fp.read()
+             elif fp is None:  # defensive check for untyped callers
+                 continue
+@@ -639,7 +639,7 @@ class PreparedRequest(RequestEncodingMixin, RequestHooksMixin):
+             else:
+                 if raw_data:
+                     body = self._encode_params(raw_data)
+-                    if isinstance(data, basestring) or isinstance(data, _SupportsRead):
++                    if isinstance(data, basestring) or hasattr(data, ""read""):
+                         content_type = None
+                     else:
+                         content_type = ""application/x-www-form-urlencoded""",False,1,1409,22,181.10006394796073
+requests_7433,psf/requests,"diff --git a/src/requests/models.py b/src/requests/models.py
+index 4142f2a4..93744eee 100644
+--- a/src/requests/models.py
++++ b/src/requests/models.py
+@@ -596,7 +596,9 @@ class PreparedRequest(RequestEncodingMixin, RequestHooksMixin):
+             if not isinstance(body, bytes):
+                 body = body.encode(""utf-8"")
+ 
+-        if isinstance(data, Iterable) and not isinstance(
++        if (
++            isinstance(data, Iterable) or hasattr(data, ""__iter__"")
++        ) and not isinstance(
+             data, (str, bytes, list, tuple, Mapping)
+         ):
+             try:",False,1,583,24,137.16794003080577
+requests_7427,psf/requests,"diff --git a/repro.py b/repro.py
+new file mode 100644
+index 00000000..7fa5ba46
+--- /dev/null
++++ b/repro.py
+@@ -0,0 +1,18 @@
++from requests.utils import should_bypass_proxies
++
++test_cases = [
++    ('http://myexample.com', 'example.com', False),
++    ('http://example.com', 'example.com', True),
++    ('http://www.example.com', 'example.com', True),
++    ('http://myexample.com', '.example.com', False),
++    ('http://www.example.com', '.example.com', True),
++    ('http://example.com', '.example.com', False),
++    ('http://example.com:8080', 'example.com:8080', True),
++    ('http://myexample.com:8080', 'example.com:8080', False),
++]
++
++for url, no_proxy, expected in test_cases:
++    result = should_bypass_proxies(url, no_proxy)
++    print(f""URL: {url}, no_proxy: {no_proxy}, Expected: {expected}, Result: {result}"")
++    assert result == expected
++print(""All tests passed!"")
+diff --git a/src/requests/utils.py b/src/requests/utils.py
+index e69ad0d7..1558bc05 100644
+--- a/src/requests/utils.py
++++ b/src/requests/utils.py
+@@ -851,19 +851,23 @@ def should_bypass_proxies(url: str, no_proxy: str | None) -> bool:
+                 host_with_port += f"":{parsed.port}""
+ 
+             for host in no_proxy_hosts:
+-                if hostname.endswith(host) or host_with_port.endswith(host):
+-                    # The URL does match something in no_proxy, so we don't want
+-                    # to apply the proxies on this URL.
++                if hostname == host or host_with_port == host:
++                    return True
++                if host.startswith('.'):
++                    if hostname.endswith(host):
++                        return True
++                elif hostname.endswith('.' + host):
+                     return True
+ 
+-    with set_environ(""no_proxy"", no_proxy_arg):
+-        try:
+-            bypass = proxy_bypass(hostname)
+-        except (TypeError, socket.gaierror):
+-            bypass = False
++    else:
++        with set_environ(""no_proxy"", no_proxy_arg):
++            try:
++                bypass = proxy_bypass(hostname)
++            except (TypeError, socket.gaierror):
++                bypass = False
+ 
+-    if bypass:
+-        return True
++        if bypass:
++            return True
+ 
+     return False",True,0,2241,28,480.57892560306937
+rich_4070,Textualize/rich,"diff --git a/rich/console.py b/rich/console.py
+index ad92d529..685014b2 100644
+--- a/rich/console.py
++++ b/rich/console.py
+@@ -1,15 +1,10 @@
+-import inspect
+ import os
+ import sys
+ import threading
+-import zlib
+ from abc import ABC, abstractmethod
+ from dataclasses import dataclass, field
+ from datetime import datetime
+ from functools import wraps
+-from getpass import getpass
+-from html import escape
+-from inspect import isclass
+ from itertools import islice
+ from math import ceil
+ from time import monotonic
+@@ -50,10 +45,8 @@ from .highlighter import NullHighlighter, ReprHighlighter
+ from .markup import render as render_markup
+ from .measure import Measurement, measure_renderables
+ from .pager import Pager, SystemPager
+-from .pretty import Pretty, is_expandable
+ from .protocol import rich_cast
+ from .region import Region
+-from .scope import render_scope
+ from .screen import Screen
+ from .segment import Segment
+ from .style import Style, StyleType
+diff --git a/rich/logging.py b/rich/logging.py
+index c3e7a5f6..0ab353c7 100644
+--- a/rich/logging.py
++++ b/rich/logging.py
+@@ -1,18 +1,24 @@
++from __future__ import annotations
++
+ import logging
++import os
+ from datetime import datetime
+ from logging import Handler, LogRecord
+-from pathlib import Path
+ from types import ModuleType
+-from typing import ClassVar, Iterable, List, Optional, Type, Union
++from typing import TYPE_CHECKING, ClassVar, Iterable, List, Optional, Type, Union
++
++if TYPE_CHECKING:
++    from ._log_render import FormatTimeCallable
++    from .console import Console, ConsoleRenderable
++    from .highlighter import Highlighter
++    from .traceback import Traceback
+ 
+ from rich._null_file import NullFile
+ 
+ from . import get_console
+-from ._log_render import FormatTimeCallable, LogRender
+-from .console import Console, ConsoleRenderable
+-from .highlighter import Highlighter, ReprHighlighter
++from ._log_render import LogRender
++from .highlighter import ReprHighlighter
+ from .text import Text
+-from .traceback import Traceback
+ 
+ 
+ class RichHandler(Handler):
+@@ -138,6 +144,7 @@ class RichHandler(Handler):
+             and record.exc_info
+             and record.exc_info != (None, None, None)
+         ):
++            from .traceback import Traceback
+             exc_type, exc_value, exc_traceback = record.exc_info
+             assert exc_type is not None
+             assert exc_value is not None
+@@ -221,7 +228,7 @@ class RichHandler(Handler):
+         Returns:
+             ConsoleRenderable: Renderable to display log.
+         """"""
+-        path = Path(record.pathname).name
++        path = os.path.basename(record.pathname)
+         level = self.get_level_text(record)
+         time_format = None if self.formatter is None else self.formatter.datefmt
+         log_time = datetime.fromtimestamp(record.created)",False,2,2806,28,340.5255335783586
+rich_4077,Textualize/rich,"diff --git a/rich/file_proxy.py b/rich/file_proxy.py
+index 4b0b0da6..d7785ddd 100644
+--- a/rich/file_proxy.py
++++ b/rich/file_proxy.py
+@@ -53,5 +53,8 @@ class FileProxy(io.TextIOBase):
+             self.__console.print(output)
+         del self.__buffer[:]
+ 
++    def isatty(self) -> bool:
++        return getattr(self.__file, ""isatty"", lambda: False)()
++
+     def fileno(self) -> int:
+         return self.__file.fileno()",True,0,422,22,245.69118805415928
+rich_4079,Textualize/rich,NO_PATCH,False,1,0,28,286.6307509597391
+rich_4076,Textualize/rich,NO_PATCH,False,-1,0,13,204.57547797076404
+httpx_3672,encode/httpx,"diff --git a/src/httpx/_parsers.py b/src/httpx/_parsers.py
+index 830fccd..61ac4cb 100644
+--- a/src/httpx/_parsers.py
++++ b/src/httpx/_parsers.py
+@@ -375,7 +375,11 @@ class HTTPParser:
+             self.recv_state = State.DONE
+         return body
+ 
+-    def complete(self):
++    @property
++    def keep_alive(self) -> bool:
++        return self.send_keep_alive and self.recv_keep_alive
++
++    def reset(self):
+         is_fully_complete = self.send_state == State.DONE and self.recv_state == State.DONE
+         is_keepalive = self.send_keep_alive and self.recv_keep_alive
+ 
+diff --git a/src/httpx/_server.py b/src/httpx/_server.py
+index 95226d9..4d95b86 100644
+--- a/src/httpx/_server.py
++++ b/src/httpx/_server.py
+@@ -33,7 +33,7 @@ class HTTPConnection:
+         try:
+             while not self._parser.is_closed():
+                 method, url, headers = self._recv_head()
+-                stream = HTTPStream(self._recv_body, self._complete)
++                stream = HTTPStream(self._recv_body, self._complete, parser=self._parser)
+                 # TODO: Handle endpoint exceptions
+                 with Request(method, url, headers=headers, content=stream) as request:
+                     try:
+@@ -51,6 +51,8 @@ class HTTPConnection:
+                         self._send_body(response)
+         except Exception:
+             logger.error(""Internal Server Error"", exc_info=True)
++        finally:
++            self.close()
+ 
+     def close(self):
+         self._parser.close()
+@@ -89,7 +91,7 @@ class HTTPConnection:
+ 
+     # Start it all over again...
+     def _complete(self):
+-        self._parser.complete
++        self._parser.reset()
+         self._idle_expiry = time.monotonic() + self._keepalive_duration
+ 
+ 
+@@ -122,5 +124,8 @@ def serve_http(endpoint):
+ 
+ 
+ def run(app):
+-    with serve_http(app) as server:
+-        server.wait()
++    try:
++        with serve_http(app) as server:
++            server.wait()
++    except KeyboardInterrupt:
++        pass
+diff --git a/src/httpx/_streams.py b/src/httpx/_streams.py
+index c88a63f..14443b4 100644
+--- a/src/httpx/_streams.py
++++ b/src/httpx/_streams.py
+@@ -92,9 +92,10 @@ class FileStream(Stream):
+ 
+ 
+ class HTTPStream(Stream):
+-    def __init__(self, next_chunk, complete):
++    def __init__(self, next_chunk, complete, parser=None):
+         self._next_chunk = next_chunk
+         self._complete = complete
++        self._parser = parser
+         self._buffer = io.BytesIO()
+ 
+     def read(self, size=-1) -> bytes:
+@@ -127,6 +128,11 @@ class HTTPStream(Stream):
+         return output
+ 
+     def close(self) -> None:
++        if self._parser and self._parser.keep_alive:
++            while True:
++                chunk = self._next_chunk()
++                if chunk == b'':
++                    break
+         self._buffer.close()
+         if self._complete is not None:
+             self._complete()",False,2,2870,25,245.0928317224607

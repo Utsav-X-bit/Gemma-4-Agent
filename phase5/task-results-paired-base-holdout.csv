@@ -1,0 +1,469 @@
+id,repo,prediction,resolved,exit_code,patch_chars,tool_calls,duration_s
+fastapi_15661,fastapi/fastapi,"diff --git a/docs/en/docs/release-notes.md b/docs/en/docs/release-notes.md
+index 88302fa06..657c095aa 100644
+--- a/docs/en/docs/release-notes.md
++++ b/docs/en/docs/release-notes.md
+@@ -6,6 +6,11 @@ hide:
+ # Release Notes
+ 
+ ## Latest Changes
++## 0.136.5 (2026-10-28)
++
++
++## 0.136.4 (2026-10-28)
++
+ 
+ ### Docs
+ 
+diff --git a/fastapi/__init__.py b/fastapi/__init__.py
+index 38e747232..1e32e5fcc 100644
+--- a/fastapi/__init__.py
++++ b/fastapi/__init__.py
+@@ -1,6 +1,6 @@
+ """"""FastAPI framework, high performance, easy to learn, fast to code, ready for production""""""
+ 
+-__version__ = ""0.136.3""
++__version__ = ""0.136.5""
+ 
+ from starlette import status as status
+ 
+diff --git a/scripts/release.py b/scripts/release.py
+new file mode 100644
+index 000000000..2bc52c4bd
+--- /dev/null
++++ b/scripts/release.py
+@@ -0,0 +1,53 @@
++import argparse
++import re
++import subprocess
++import sys
++from pathlib import Path
++
++def update_version(version: str):
++    file_path = Path(""fastapi/__init__.py"")
++    content = file_path.read_text(encoding=""utf-8"")
++    new_content = re.sub(r'__version__ = ""[^""]+""', f'__version__ = ""{version}""', content)
++    if content == new_content:
++        print(f""Version {version} already set in fastapi/__init__.py"")
++    else:
++        file_path.write_text(new_content, encoding=""utf-8"")
++        print(f""Updated fastapi/__init__.py to version {version}"")
++
++def update_release_notes(version: str):
++    file_path = Path(""docs/en/docs/release-notes.md"")
++    lines = file_path.read_text(encoding=""utf-8"").splitlines(keepends=True)
++    
++    new_lines = []
++    found_latest_changes = False
++    for line in lines:
++        new_lines.append(line)
++        if line.strip() == ""## Latest Changes"":
++            new_lines.append(f""## {version}\n\n"")
++            found_latest_changes = True
++            
++    if not found_latest_changes:
++        print(""Could not find '## Latest Changes' in release-notes.md"")
++        sys.exit(1)
++        
++    file_path.write_text("""".join(new_lines), encoding=""utf-8"")
++    print(f""Inserted version {version} into release-notes.md"")
++
++def main():
++    parser = argparse.ArgumentParser(description=""Release FastAPI"")
++    parser.add_argument(""version"", help=""The new version string (e.g. 0.136.4)"")
++    args = parser.parse_args()
++    
++    update_version(args.version)
++    update_release_notes(args.version)
++    
++    print(""Adding release date..."")
++    result = subprocess.run([sys.executable, ""scripts/add_latest_release_date.py""], capture_output=True, text=True)
++    if result.returncode == 0:
++        print(result.stdout)
++    else:
++        print(f""Error adding release date: {result.stderr}"")
++        sys.exit(result.returncode)
++
++if __name__ == ""__main__"":
++    main()",False,2,2734,28,381.5049732513726
+fastapi_15588,fastapi/fastapi,"diff --git a/fastapi/sse.py b/fastapi/sse.py
+index 901d82496..59c2a1ec1 100644
+--- a/fastapi/sse.py
++++ b/fastapi/sse.py
+@@ -133,13 +133,17 @@ class ServerSentEvent(BaseModel):
+     ] = None
+ 
+     @model_validator(mode=""after"")
+-    def _check_data_exclusive(self) -> ""ServerSentEvent"":
++    def _check_sse_fields(self) -> ""ServerSentEvent"":
+         if self.data is not None and self.raw_data is not None:
+             raise ValueError(
+                 ""Cannot set both 'data' and 'raw_data' on the same ""
+                 ""ServerSentEvent. Use 'data' for JSON-serialized payloads ""
+                 ""or 'raw_data' for pre-formatted strings.""
+             )
++        if self.event is not None and (""\n"" in self.event or ""\r"" in self.event):
++            raise ValueError(""SSE 'event' must not contain newlines"")
++        if self.id is not None and (""\n"" in self.id or ""\r"" in self.id):
++            raise ValueError(""SSE 'id' must not contain newlines"")
+         return self",False,1,977,16,157.57818278856575
+fastapi_15589,fastapi/fastapi,"diff --git a/fastapi/dependencies/utils.py b/fastapi/dependencies/utils.py
+index 7c6558c69..b29f664de 100644
+--- a/fastapi/dependencies/utils.py
++++ b/fastapi/dependencies/utils.py
+@@ -822,6 +822,7 @@ def request_params_to_args(
+                 alias = get_validation_alias(field)
+                 if alias == field.name:
+                     alias = alias.replace(""_"", ""-"")
++                processed_keys.add(get_validation_alias(field))
+         value = _get_multidict_value(field, received_params, alias=alias)
+         if value is not None:
+             params_to_process[get_validation_alias(field)] = value",True,0,614,28,350.84757698420435
+fastapi_15030,fastapi/fastapi,"diff --git a/fastapi/responses.py b/fastapi/responses.py
+index 5b1154c0..c1753066 100644
+--- a/fastapi/responses.py
++++ b/fastapi/responses.py
+@@ -22,6 +22,29 @@ except ImportError:  # pragma: nocover
+     orjson = None  # type: ignore
+ 
+ 
++class SSEResponse(StreamingResponse):
++    """"""SSE response.""""""
++
++    def __init__(
++        self,
++        content: Any,
++        status_code: int = None,
++        headers: dict = None,
++        background: Any = None,
++    ):
++        headers = dict(headers) if headers else {}
++        headers[""Cache-Control""] = ""no-cache""
++        headers[""Connection""] = ""keep-alive""
++        headers[""X-Accel-Buffering""] = ""no""
++        super().__init__(
++            content,
++            status_code=status_code,
++            headers=headers,
++            background=background,
++            media_type=""text/event-stream"",
++        )
++
++
+ @deprecated(
+     ""UJSONResponse is deprecated, FastAPI now serializes data directly to JSON ""
+     ""bytes via Pydantic when a return type or response model is set, which is """,False,2,1048,17,246.53317739628255
+requests_7505,psf/requests,"diff --git a/src/requests/_types.py b/src/requests/_types.py
+index b2273d61..f325a553 100644
+--- a/src/requests/_types.py
++++ b/src/requests/_types.py
+@@ -34,6 +34,14 @@ class SupportsItems(Protocol[_KT_co, _VT_co]):
+     def items(self) -> Iterable[tuple[_KT_co, _VT_co]]: ...
+ 
+ 
++def is_supports_read(obj: Any) -> TypeIs[SupportsRead[Any]]:
++    return isinstance(obj, SupportsRead) or hasattr(obj, ""read"")
++
++
++def is_supports_items(obj: Any) -> TypeIs[SupportsItems[Any, Any]]:
++    return isinstance(obj, SupportsItems) or hasattr(obj, ""items"")
++
++
+ # These are needed at runtime for default_hooks() return type
+ HookType: TypeAlias = Callable[[""Response""], Any]
+ HooksInputType: TypeAlias = Mapping[str, Iterable[HookType] | HookType]
+diff --git a/src/requests/models.py b/src/requests/models.py
+index ebeba1e3..e464b4b9 100644
+--- a/src/requests/models.py
++++ b/src/requests/models.py
+@@ -36,7 +36,7 @@ from urllib3.filepost import encode_multipart_formdata
+ from urllib3.util import parse_url
+ 
+ from ._internal_utils import to_native_string, unicode_is_ascii
+-from ._types import SupportsRead as _SupportsRead
++from ._types import SupportsRead as _SupportsRead, is_supports_read
+ from .auth import HTTPBasicAuth
+ from .compat import (
+     JSONDecodeError,
+@@ -161,7 +161,7 @@ class RequestEncodingMixin:
+ 
+         if isinstance(data, (str, bytes)):
+             return data
+-        elif isinstance(data, _SupportsRead):
++        elif is_supports_read(data):
+             return data
+         elif hasattr(data, ""__iter__""):
+             result: list[tuple[bytes, bytes]] = []
+@@ -238,7 +238,7 @@ class RequestEncodingMixin:
+                 fdata = fp
+             # data that proxies attributes to underlying objects needs hasattr
+             # defensive check for untyped callers
+-            elif isinstance(fp, _SupportsRead) or hasattr(fp, ""read""):
++            elif is_supports_read(fp):
+                 fdata = fp.read()
+             elif fp is None:  # defensive check for untyped callers
+                 continue
+@@ -641,7 +641,7 @@ class PreparedRequest(RequestEncodingMixin, RequestHooksMixin):
+             else:
+                 if raw_data:
+                     body = self._encode_params(raw_data)
+-                    if isinstance(data, basestring) or isinstance(data, _SupportsRead):
++                    if isinstance(data, basestring) or is_supports_read(data):
+                         content_type = None
+                     else:
+                         content_type = ""application/x-www-form-urlencoded""
+diff --git a/src/requests/utils.py b/src/requests/utils.py
+index fff6edf4..d92ca921 100644
+--- a/src/requests/utils.py
++++ b/src/requests/utils.py
+@@ -42,7 +42,7 @@ from ._internal_utils import (  # noqa: F401
+     HEADER_VALIDATORS,
+     to_native_string,
+ )
+-from ._types import SupportsItems as _SupportsItems
++from ._types import SupportsItems as _SupportsItems, is_supports_items
+ from .compat import (
+     Mapping,
+     bytes,
+@@ -151,7 +151,7 @@ def dict_to_sequence(
+ ) -> Iterable[tuple[Any, Any]]:
+     """"""Returns an internal sequence dictionary update.""""""
+ 
+-    if isinstance(d, _SupportsItems):
++    if is_supports_items(d):
+         return d.items()
+ 
+     return d
+@@ -398,7 +398,7 @@ def to_key_val_list(
+     if isinstance(value, (str, bytes, bool, int)):
+         raise ValueError(""cannot encode objects that are not 2-tuples"")
+ 
+-    if isinstance(value, _SupportsItems):
++    if is_supports_items(value):
+         return list(value.items())
+ 
+     return list(value)",False,1,3533,23,251.55397984478623
+requests_7502,psf/requests,"diff --git a/src/requests/models.py b/src/requests/models.py
+index c4cc028e..b7f8f2ec 100644
+--- a/src/requests/models.py
++++ b/src/requests/models.py
+@@ -161,7 +161,7 @@ class RequestEncodingMixin:
+ 
+         if isinstance(data, (str, bytes)):
+             return data
+-        elif isinstance(data, _SupportsRead):
++        elif hasattr(data, ""read""):
+             return data
+         elif hasattr(data, ""__iter__""):
+             result: list[tuple[bytes, bytes]] = []
+@@ -236,7 +236,7 @@ class RequestEncodingMixin:
+ 
+             if isinstance(fp, (str, bytes, bytearray)):
+                 fdata = fp
+-            elif isinstance(fp, _SupportsRead):  # defensive check for untyped callers
++            elif hasattr(fp, ""read""):  # defensive check for untyped callers
+                 fdata = fp.read()
+             elif fp is None:  # defensive check for untyped callers
+                 continue
+@@ -639,7 +639,7 @@ class PreparedRequest(RequestEncodingMixin, RequestHooksMixin):
+             else:
+                 if raw_data:
+                     body = self._encode_params(raw_data)
+-                    if isinstance(data, basestring) or isinstance(data, _SupportsRead):
++                    if isinstance(data, basestring) or hasattr(data, ""read""):
+                         content_type = None
+                     else:
+                         content_type = ""application/x-www-form-urlencoded""",False,1,1409,28,160.95002908911556
+requests_7433,psf/requests,"diff --git a/src/requests/models.py b/src/requests/models.py
+index 4142f2a4..f271e7e6 100644
+--- a/src/requests/models.py
++++ b/src/requests/models.py
+@@ -596,9 +596,9 @@ class PreparedRequest(RequestEncodingMixin, RequestHooksMixin):
+             if not isinstance(body, bytes):
+                 body = body.encode(""utf-8"")
+ 
+-        if isinstance(data, Iterable) and not isinstance(
+-            data, (str, bytes, list, tuple, Mapping)
+-        ):
++        if (
++            isinstance(data, Iterable) or hasattr(data, ""__iter__"")
++        ) and not isinstance(data, (str, bytes, list, tuple, Mapping)):
+             try:
+                 length = super_len(data)
+             except (TypeError, AttributeError, UnsupportedOperation):",False,1,738,25,168.30739937350154
+requests_7427,psf/requests,"diff --git a/src/requests/utils.py b/src/requests/utils.py
+index e69ad0d7..6152022d 100644
+--- a/src/requests/utils.py
++++ b/src/requests/utils.py
+@@ -851,7 +851,9 @@ def should_bypass_proxies(url: str, no_proxy: str | None) -> bool:
+                 host_with_port += f"":{parsed.port}""
+ 
+             for host in no_proxy_hosts:
+-                if hostname.endswith(host) or host_with_port.endswith(host):
++                normalized_host = host.lstrip('.')
++                if hostname == normalized_host or hostname.endswith('.' + normalized_host) or \
++                   host_with_port == normalized_host or host_with_port.endswith('.' + normalized_host):
+                     # The URL does match something in no_proxy, so we don't want
+                     # to apply the proxies on this URL.
+                     return True",True,0,833,11,213.9320602118969
+rich_4070,Textualize/rich,"diff --git a/rich/console.py b/rich/console.py
+index ad92d529..8f0eae92 100644
+--- a/rich/console.py
++++ b/rich/console.py
+@@ -1,4 +1,3 @@
+-import inspect
+ import os
+ import sys
+ import threading
+@@ -9,7 +8,6 @@ from datetime import datetime
+ from functools import wraps
+ from getpass import getpass
+ from html import escape
+-from inspect import isclass
+ from itertools import islice
+ from math import ceil
+ from time import monotonic
+@@ -1321,7 +1319,7 @@ class Console:
+         render_iterable: RenderResult
+ 
+         renderable = rich_cast(renderable)
+-        if hasattr(renderable, ""__rich_console__"") and not isclass(renderable):
++        if hasattr(renderable, ""__rich_console__"") and not isinstance(renderable, type):
+             render_iterable = renderable.__rich_console__(self, _options)
+         elif isinstance(renderable, str):
+             text_renderable = self.render_str(
+@@ -1901,7 +1899,7 @@ class Console:
+     @staticmethod
+     def _caller_frame_info(
+         offset: int,
+-        currentframe: Callable[[], Optional[FrameType]] = inspect.currentframe,
++        currentframe: Callable[[], Optional[FrameType]] = sys._getframe,
+     ) -> Tuple[str, int, Dict[str, Any]]:
+         """"""Get caller frame information.
+ 
+diff --git a/rich/logging.py b/rich/logging.py
+index c3e7a5f6..602d6c66 100644
+--- a/rich/logging.py
++++ b/rich/logging.py
+@@ -1,18 +1,23 @@
++from __future__ import annotations
++
+ import logging
++import os
+ from datetime import datetime
+ from logging import Handler, LogRecord
+-from pathlib import Path
+ from types import ModuleType
+-from typing import ClassVar, Iterable, List, Optional, Type, Union
++from typing import TYPE_CHECKING, ClassVar, Iterable, List, Optional, Type, Union
+ 
+ from rich._null_file import NullFile
+ 
+ from . import get_console
+-from ._log_render import FormatTimeCallable, LogRender
+-from .console import Console, ConsoleRenderable
+-from .highlighter import Highlighter, ReprHighlighter
++from ._log_render import LogRender
++from .highlighter import ReprHighlighter
+ from .text import Text
+-from .traceback import Traceback
++
++if TYPE_CHECKING:
++    from ._log_render import FormatTimeCallable
++    from .console import Console, ConsoleRenderable
++    from .highlighter import Highlighter
+ 
+ 
+ class RichHandler(Handler):
+@@ -138,6 +143,7 @@ class RichHandler(Handler):
+             and record.exc_info
+             and record.exc_info != (None, None, None)
+         ):
++            from .traceback import Traceback
+             exc_type, exc_value, exc_traceback = record.exc_info
+             assert exc_type is not None
+             assert exc_value is not None
+@@ -221,7 +227,7 @@ class RichHandler(Handler):
+         Returns:
+             ConsoleRenderable: Renderable to display log.
+         """"""
+-        path = Path(record.pathname).name
++        path = os.path.basename(record.pathname)
+         level = self.get_level_text(record)
+         time_format = None if self.formatter is None else self.formatter.datefmt
+         log_time = datetime.fromtimestamp(record.created)",False,1,3049,28,169.08911011647433
+rich_4077,Textualize/rich,"diff --git a/rich/file_proxy.py b/rich/file_proxy.py
+index 4b0b0da6..d04286c1 100644
+--- a/rich/file_proxy.py
++++ b/rich/file_proxy.py
+@@ -55,3 +55,7 @@ class FileProxy(io.TextIOBase):
+ 
+     def fileno(self) -> int:
+         return self.__file.fileno()
++
++    def isatty(self) -> bool:
++        return self.__console.is_terminal
++",False,1,331,26,233.98826989438385
+rich_4079,Textualize/rich,NO_PATCH,False,1,0,28,304.7191825658083
+rich_4076,Textualize/rich,NO_PATCH,False,1,0,28,257.3155725253746
+httpx_3672,encode/httpx,"diff --git a/src/httpx/_parsers.py b/src/httpx/_parsers.py
+index 830fccd..e6a0d36 100644
+--- a/src/httpx/_parsers.py
++++ b/src/httpx/_parsers.py
+@@ -375,11 +375,13 @@ class HTTPParser:
+             self.recv_state = State.DONE
+         return body
+ 
+-    def complete(self):
+-        is_fully_complete = self.send_state == State.DONE and self.recv_state == State.DONE
+-        is_keepalive = self.send_keep_alive and self.recv_keep_alive
++    @property
++    def keep_alive(self) -> bool:
++        return self.send_keep_alive and self.recv_keep_alive
+ 
+-        if not (is_fully_complete and is_keepalive):
++    def reset(self):
++        is_fully_complete = self.send_state == State.DONE and self.recv_state == State.DONE
++        if not (is_fully_complete and self.keep_alive):
+             self.close()
+             return
+ 
+diff --git a/src/httpx/_server.py b/src/httpx/_server.py
+index 95226d9..3245161 100644
+--- a/src/httpx/_server.py
++++ b/src/httpx/_server.py
+@@ -89,7 +89,10 @@ class HTTPConnection:
+ 
+     # Start it all over again...
+     def _complete(self):
+-        self._parser.complete
++        if self._parser.recv_keep_alive:
++            while self._parser.recv_state == State.RECV_BODY:
++                self._parser.recv_body()
++        self._parser.reset()
+         self._idle_expiry = time.monotonic() + self._keepalive_duration
+ 
+ 
+@@ -106,7 +109,10 @@ class HTTPServer:
+ def serve_http(endpoint):
+     def handler(stream):
+         connection = HTTPConnection(stream, endpoint)
+-        connection.handle_requests()
++        try:
++            connection.handle_requests()
++        finally:
++            connection.close()
+ 
+     logging.basicConfig(
+         format=""%(levelname)s [%(asctime)s] %(name)s - %(message)s"",
+@@ -122,5 +128,8 @@ def serve_http(endpoint):
+ 
+ 
+ def run(app):
+-    with serve_http(app) as server:
+-        server.wait()
++    try:
++        with serve_http(app) as server:
++            server.wait()
++    except KeyboardInterrupt:
++        pass",False,2,1991,28,265.10640748683363

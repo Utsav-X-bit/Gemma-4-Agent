@@ -16,8 +16,15 @@ models/
 submission-probe/
 submission-probe.zip
 
+# Local Docker evaluator artifacts
+.venv-local/
+data/
+docker-sandbox/
+wheelhouse/
+local-results/
+
 # OS
 .DS_Store
 
-# Large LoRA adapter (remote only)
-phase5/submission-gold/adapters/
+# Large LoRA adapters (remote only)
+phase5/submission-*/adapters/
