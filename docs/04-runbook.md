@@ -525,6 +525,25 @@ temperatures, filters, counts, token stats, license, known limitations.
 
 Publish the dataset if you use it (S3).
 
+### 6.5 Build per-call SFT from current ATIF traces
+
+Use `phase5/build_agent_sft.py`. It reads the successful trace directories plus their `task-results-*.csv`, keeps `resolved=True` and `patch_chars>0`, and emits per-call `prompt`/`completion` rows in the same Gemma 4 turn format as `native_clean_sft.jsonl`.
+
+It uses:
+
+- the current v4-32 system prompt (`phase5/submission-v4-32-prefixed/prompts/system.md`)
+- the current tool declaration block (`phase5/tool_block.txt`, extracted from the harness prompt)
+- the trace’s exact task prompt and workspace tree
+- the model’s own thought/tool-call/observation sequence
+
+```bash
+python phase5/build_agent_sft.py
+# -> phase5/agent_sft.jsonl       (agent-only)
+# -> phase5/agent_sft_mix.jsonl   (agent rows x5 + native_clean_sft rows)
+```
+
+Filter/dedupe before training. Do not mix traces from a different system prompt or tool schema.
+
 ---
 
 ## 7. Train the adapter
@@ -576,7 +595,15 @@ ls "$OUT"/adapter_config.json "$OUT"/adapter_model.safetensors
 du -sh "$OUT"
 ```
 
-Copy only the adapter files into `$AGENT/adapters/main_lora/`.
+**Required vLLM remap.** Training produces `model.language_model.layers.*` keys. The scorer’s text-only vLLM model exposes `model.self_decoder.decoder_layers.*`. Run:
+
+```bash
+python phase5/remap_adapter_prefix.py \
+  --src "$OUT" \
+  --dst "$OUT-vllm"
+```
+
+The remap keeps separate `q_proj`/`k_proj`/`v_proj` and `gate_proj`/`up_proj` keys; vLLM’s `packed_modules_mapping` handles the fused `qkv_proj`/`gate_up_proj` layers. Do **not** fuse the adapter; vLLM rejects `qkv_proj`/`gate_up_proj` as target names.
 
 Check keys/rank:
 
@@ -584,13 +611,22 @@ Check keys/rank:
 python - <<'PY'
 import json
 from safetensors.torch import load_file
-p="$AGENT/adapters/main_lora"
+p="$OUT-vllm"
 c=json.load(open(f"{p}/adapter_config.json"))
 sd=load_file(f"{p}/adapter_model.safetensors")
 print({k:c.get(k) for k in ["r","lora_alpha","target_modules","base_model_name_or_path"]})
-print("tensors", len(sd), "non-lora", [k for k in sd if "lora" not in k][:5])
+print("tensors", len(sd), "prefixes", sorted({k.split("layers.")[0] for k in sd})[:3])
+print("non-lora", [k for k in sd if "lora" not in k][:5])
 PY
 ```
+
+Expected prefix:
+
+```text
+base_model.model.model.self_decoder.decoder_layers.
+```
+
+Copy only `adapter_config.json` and `adapter_model.safetensors` into `$AGENT/adapters/main_lora/`. Remove tokenizer files and `chat_template.jinja`; `.jinja` is a disallowed submission extension.
 
 Add `adapter: main_lora` to `agent.yaml` (and any sub-agent that should use it).
 
@@ -600,17 +636,39 @@ Add `adapter: main_lora` to `agent.yaml` (and any sub-agent that should use it).
 
 ### 8.1 Start vLLM with the adapter
 
-Use the **same wheelhouse vLLM build** as the scorer/harness (the `$WORK/harness-venv` from §1.2), not an arbitrary local install. Record `vllm.__version__` and the wheel hash. Use the same env var and config as §3.2. Check:
+Use the **same wheelhouse vLLM build** as the scorer/harness. The verified wheel is:
+
+```text
+~/gemma4/wheelhouse/vllm-0.19.1-cp38-abi3-manylinux_2_31_x86_64.whl
+sha256 73c69bafca24fbdad44690c44d6c6446514351e6f3cc9a6057cba05e66051310
+```
+
+Serve with `--max-lora-rank 16` for a rank-16 adapter. Check:
 
 ```bash
 curl -s http://127.0.0.1:8000/v1/models
 ```
 
-Look for the adapter name and the base model. Check the server log for `GPU KV cache size` and any warnings.
+Look for the adapter name and the base model. In the server log, `Loaded new LoRA adapter` only proves the file loaded. If the debug log says:
+
+```text
+No LoRA weights found for module ...qkv_proj
+```
+
+the adapter prefix is wrong; run `phase5/remap_adapter_prefix.py` and restart.
 
 ### 8.2 A/B at temperature 0
 
-Use three fixed prompts. Compare base vs adapter outputs. They must differ; if identical, the adapter is ignored (S23). Restart and repeat; outputs should be stable (S24).
+Do not rely on generated text alone. Compare **logprobs** for the first token with `temperature=0`, `max_tokens=1`, `logprobs=true`, `top_logprobs=3`. Base and adapter must differ.
+
+Verified example:
+
+```text
+base       first-token logprob -1.7881377516459906e-06
+prefixed   first-token logprob -2.861018856492592e-06
+```
+
+The top-2 alternatives also differ. If logprobs are byte-identical, the adapter is ignored (S23); restart and repeat.
 
 ### 8.3 Alpha sweep
 

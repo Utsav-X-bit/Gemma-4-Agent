@@ -28,3 +28,5 @@ local-results/
 
 # Large LoRA adapters (remote only)
 phase5/submission-*/adapters/
+
+phase5/agent_sft_mix.jsonl 

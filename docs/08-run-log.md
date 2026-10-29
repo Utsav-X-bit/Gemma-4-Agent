@@ -2,7 +2,9 @@
 
 This is the chronological record of what we actually did, what changed, and why. It is not a polished guide; it is the audit trail for future reference. The main plan is `README.md`; deviations are recorded here.
 
-Last updated: **2026-10-27**.
+Last updated: **2026-10-29**.
+
+Sections 2–7 are historical. The consolidated timeline and current status are below.
 
 ---
 
@@ -10,16 +12,37 @@ Last updated: **2026-10-27**.
 
 | Item | Status |
 |---|---|
-| Phase 0 — hidden submission probe | **Scored 0.18** (ref **57642443**) |
-| Phase 5 — exact public 0.24 prompt | Submitted **57709729**, **PENDING** |
-| Phase 1 — harness smoke test | Passed on Kaggle L4x4; one non-empty patch |
-| Phase 2a — gold-patch calibration | **13/13** selected public tasks resolved |
-| Phase 2b — budget comparison | Complete; **8 min / 28 calls** is best of three |
-| Phase 3 — prompt v2 | Run; **2/13**, no improvement over probe |
-| Remote 4×A100 harness | **Operational**; vLLM 0.19.1 + harness venv; smoke tasks pass |
-| Docker | Not used; no sudo on remote; Kaggle uses subprocess sandbox |
+| Latest public notebook score | **0.17** (ref **57709729**); not our adapter |
+| Our adapter submission | **None yet** |
+| Active adapter | `native-clean-prefixed`, rank 16, alpha 8, 234 MB; **active by logprob A/B** |
+| Best ready bundle | `phase5/submission-v4-32-prefixed` |
+| Best local five-task result | **5/5 reported, 4/5 certain** (`fastapi_15588` message test inconsistent) |
+| Local Docker gold audit | **8/13**; five clean tasks all pass gold |
+| New agent-trajectory SFT | **Training in progress** (`agent_sft.jsonl`, 353 rows, 3 epochs) |
+| Remote 4×A100 harness | Operational; vLLM 0.19.1 custom wheel, sha256 `73c69baf...` |
+| Submission | **Not submitted; waiting for new adapter evaluation** |
 
-Current best configuration: **31B, 8 min, 28 calls, 240 s command timeout, 8192 output, 4096 thinking, subprocess sandbox**. It is not yet final because the projected 120-task time is ~10.8 h, too close to the 12 h limit.
+Current best configuration: **31B, 8 min, 32 calls, 240 s command timeout, 8192 output, 4096 thinking, Docker local eval**. Projected 120-task time is ~10.7 h, close to the 12 h cap. Do not raise to 48 calls.
+
+---
+
+## 0. Consolidated timeline (2026-10-24 → 2026-10-29)
+
+| Phase | What was done | Result | Why it failed / what was learned | Kept |
+|---|---|---|---|---|
+| Probe | Public prompt-only bundle, 8 min / 28 calls | **0.18** (ref 57642443) | Submission mechanism works; agent quality is the bottleneck | `submission-probe.zip` fallback |
+| Public 0.24 prompt | Exact public notebook prompt | **0.17** (ref 57709729) | Prompt copy did not transfer to hidden tasks | Historical only |
+| Remote harness | vLLM 0.19.1 + `swegemma` subprocess on 4×A100 | 13-task screen 2–3/13 | **Invalid for 8/13**: subprocess mode skips editable install/test deps; `httpbin` fixture, `httpx` src layout, Pygments drift | Remote smoke only |
+| Gold-patch SFT | `gold_sft.jsonl`, rank 16, alpha 16 | 3/13, same tasks | Gold diffs do not match agent tool-call distribution | Historical |
+| Public SFT | `public_sft.jsonl` | 3/13, same tasks | No new task coverage | Historical |
+| Policy v3/v4 | Prompt hardening + 28/32-call budgets | 3/13, 2/13 | Adapter was inactive; 28-call variant loses `fastapi_15589` | v4-32 prompt |
+| v5 prompt | Call clock + exact tool rules + no-scratch rules | Regressed | Model ignored extra prose; created `repro.py`; empty patches | Rejected |
+| Adapter debug | A/B logprobs on W4A16 | Byte-identical | vLLM skipped all adapter modules | Root-cause evidence |
+| Fused adapter | Convert q/k/v and gate/up to fused keys | vLLM rejected | `check_unexpected_modules` expects separate target names | Rejected |
+| Prefix remap | Separate keys + `self_decoder.decoder_layers` prefix | **Logprobs differ** | vLLM `packed_modules_mapping` handles fused modules | `native-clean-prefixed` |
+| Five-task eval | v4/v6/v7/clean-tools with active adapter | v4 **5/5 reported / 4/5 certain** | v6/v7/clean-tools have `patch_chars=0` false positives or regressions | `submission-v4-32-prefixed` |
+| Docker evaluator | Local `swebench-sandbox:latest` + `.venv-local` | Gold **8/13** | Five clean tasks: `fastapi_15588`, `fastapi_15589`, `requests_7427`, `rich_4077`, `rich_4076` | `local_eval.py`, `local_verify.py` |
+| Agent-trajectory SFT | 353 per-call rows from successful v4/v6/v7 traces, current prompt/tools | **Training in progress** | Not yet evaluated; may overfit five tasks | `agent_sft.jsonl`, `build_agent_sft.py` |
 
 ---
 
@@ -600,27 +623,45 @@ Artifacts: `phase5/submission-v4-32-prefixed`, `phase5/remap_adapter_prefix.py`,
 
 ---
 
+## 6.2 2026-10-29 — agent-trajectory SFT
+
+**Data.** `phase5/build_agent_sft.py` produced 353 per-call samples from the successful traces of `v4-32-prefixed`, `v6-32-prefixed`, `v7-32-finisher-prefixed`, and the earlier remote v4-32 run. It keeps `resolved=True` and `patch_chars>0`, uses the current v4-32 system prompt plus the current tool declaration block, and preserves the model’s own thought/tool-call/observation sequence.
+
+- Unique tasks: `fastapi_15588`, `fastapi_15589`, `requests_7427`, `rich_4077`, `rich_4076`.
+- Output: `phase5/agent_sft.jsonl` (353 rows), `phase5/agent_sft_mix.jsonl` (agent rows ×5 + 778 native rows).
+- Training run: 353 agent rows, rank 16, alpha 8, 3 epochs, max length 8192, lr 5e-5, 4×A100, output `~/gemma4/adapters/agent-sft-r16`.
+- Started 2026-10-29 15:29; **in progress** at last check.
+
+**Evaluation plan.** Remap with `phase5/remap_adapter_prefix.py`, serve with `--max-lora-rank 16`, prove activation by logprobs, then run the five clean tasks. Promote only if it beats the current `native-clean-prefixed` 4/5-certain result with all patches >0.
+
+**Risk.** Only five unique tasks; the adapter may overfit. The hidden score remains the only final signal.
+
+---
+
 ## 7. Deviations from the main runbook
 
 | Main runbook | Actual | Reason |
 |---|---|---|
-| Build harness on remote 4×A100 | Harness on Kaggle L4x4 | Remote Python 3.10/no Docker; wheelhouse is Kaggle-image-specific and dependency graph is unsatisfiable on a bare venv |
-| Use Docker sandbox | `subprocess` sandbox | No Docker/sudo on remote; Kaggle notebook uses subprocess |
-| Run 20–40 task holdout | 13 tasks | Calibrated 13/13; fast iteration; 13 is a screen, not statistical proof |
-| Primary budget 5 min / 24 calls | Probe 8 min / 28 calls is current best | Primary resolved 0/13; probe resolved 2/13 and produced 12/13 patches |
-| Consider more calls | 40 calls tested and rejected | Worse resolves, worse projection (12.7 h) |
-| Use full 129 public tasks | 13-task subset for budget comparison | Cost/time; gold-calibrated subset |
-| Start LoRA after baseline | Not started | Agent behavior/prompt is still the bottleneck; no adapter yet |
+| Build harness on remote 4×A100 | Remote harness used for smoke only | The remote `subprocess` sandbox skips editable install and test dependencies; gold fails 8/13. The local Docker evaluator is now the calibration path. |
+| Use Docker sandbox | Docker locally; subprocess remotely | Local Docker image works; remote has no Docker/sudo. Remote subprocess results are not a valid 13-task score. |
+| Run 20–40 task holdout | 5 clean tasks for prompt comparison | Gold audit found only five public tasks valid under the Docker image; 13-task subprocess screen is invalid for 8/13. |
+| Primary budget 5 min / 24 calls | 8 min / 32 calls is current best | 28 calls loses `fastapi_15589`; 32 calls is the best quality/time tradeoff. |
+| Consider more calls | 40 and 48 rejected | Worse resolves or projected >12 h. 32 calls projects to ~10.7 h. |
+| Use full 129 public tasks | Five clean tasks + 13-task gold audit | Cost/time; the five tasks are the only clean comparison set. |
+| Start LoRA after baseline | Adapter active after prefix remap | Direct W4A16 PEFT is blocked; the unquantized-QAT adapter is prefix-remapped for vLLM. |
+| Fuse qkv/gate_up for vLLM | Rejected | vLLM `check_unexpected_modules` expects separate target names. Keep separate keys + `self_decoder` prefix. |
+| Add a longer v5 prompt | Rejected | The model ignored the extra rules and regressed. Keep v4-32. |
+| Remove `get_status`/graph tools | Rejected | Removing tools regressed `requests_7427`. Keep the original tool list. |
 
 ---
 
 ## 8. Open questions
 
-1. Does prompt v2 improve resolved count on the same 13 tasks?
-2. Can the budget drop to 7 min / 28 calls without losing resolves, to create global-time margin?
-3. Why do `requests_*` patches touch the correct files but fail tests? Need test failure logs.
-4. Is the hidden test set similar enough that a 13-task local screen is predictive? The public evidence says local-to-hidden transfer is weak.
-5. What is the Phase 0 probe score/status? Still pending at last check.
+1. Does the new agent-trajectory SFT adapter beat the current `native-clean-prefixed` on the five clean tasks? Training is in progress.
+2. Does the five-task clean set transfer to the hidden set? The hidden score is the only final signal.
+3. Can the Docker `fastapi_15588` test-patch inconsistency be resolved? It currently passes with the wrong exact message, so that task is not trustworthy.
+4. Does `submission-v4-32-prefixed` hold on a larger holdout (20–40 tasks) without the `patch_chars=0` false positives?
+5. What is the real 120-task wall time at 32 calls? The projection is ~10.7 h; the global cap is 12 h.
 
 ---
 
@@ -628,12 +669,17 @@ Artifacts: `phase5/submission-v4-32-prefixed`, `phase5/remap_adapter_prefix.py`,
 
 | Artifact | Path |
 |---|---|
-| Phase 2 all-three notebook | `phase2/phase2-all-three.ipynb` |
-| Phase 2 results | `phase2/task-results-{primary,probe,calls40,all}.csv` |
-| Phase 3 prompt v2 notebook | `phase3/phase3-prompt-v2.ipynb` |
-| Submission probe | `submission-probe.zip` |
-| Primary bundle | `submission-primary.zip` |
-| Main playbook | `README.md`, `docs/00`–`docs/07` |
+| Ready bundle | `phase5/submission-v4-32-prefixed` |
+| Prefixed adapter | `~/gemma4/adapters/native-clean-prefixed` |
+| Adapter remap tool | `phase5/remap_adapter_prefix.py` |
+| Agent SFT builder | `phase5/build_agent_sft.py` |
+| Agent SFT data | `phase5/agent_sft.jsonl`, `phase5/agent_sft_mix.jsonl` |
+| Local Docker evaluator | `phase5/local_eval.py`, `phase5/local_verify.py`, `.venv-local`, `docker-sandbox/` |
+| Local gold audit | `local-results/verify-gold*.jsonl` |
+| Five-task results | `local-results/task-results-v4-32-prefixed.csv` |
+| Adapter/evaluator doc | `docs/09-adapter-and-local-eval.md` |
+| Historical probe | `submission-probe.zip` |
+| Main playbook | `README.md`, `docs/00`–`docs/09` |
 | Source ledger | `docs/SOURCES.md` |
 
 ---
