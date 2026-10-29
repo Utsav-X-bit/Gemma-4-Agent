@@ -172,3 +172,7 @@ Best ready bundle: **`phase5/submission-v4-32-prefixed`** — keep the original 
 - Do not include `chat_template.jinja`; `.jinja` is a disallowed submission extension.
 - Projected 120-task time: ~10.7 h at ~320 s/task. Do not raise to 48 calls.
 - Do not remove `get_status`/graph tools; the clean-tools variant lost `requests_7427`.
+
+## 6. Future dataset work
+
+See `docs/superpowers/plans/2026-10-29-gold-dataset-pipeline.md` for the phased gold-standard dataset pipeline: task pool, multi-temperature generation, execution validation, process scoring, human review, per-call formatting, dedupe/decontamination, dataset card, training/evaluation, and hard-example iteration.
